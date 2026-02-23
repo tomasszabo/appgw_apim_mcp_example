@@ -1,4 +1,4 @@
-# MCP Weather Server - Azure Deployment
+# Application Gateway, API MAnagement and MCP Server Example
 
 ## Overview
 
