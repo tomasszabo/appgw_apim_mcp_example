@@ -1,4 +1,4 @@
-# Application Gateway, API MAnagement and MCP Server Example
+# Application Gateway, API Management and MCP Server Example
 
 ## Overview
 
