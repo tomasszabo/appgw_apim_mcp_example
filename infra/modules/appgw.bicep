@@ -260,27 +260,35 @@ resource agw 'Microsoft.Network/applicationGateways@2024-10-01' = {
         }
       ] : []
     )
-    redirectConfigurations: hasHttps ? [
-      {
-        name: 'redirect-http-https'
-        properties: {
-          redirectType: 'Permanent'
-          targetListener: {
-            id: resourceId('Microsoft.Network/applicationGateways/httpListeners', agwName, 'listener443')
+    redirectConfigurations: concat(
+      hasHttps ? [
+        {
+          name: 'redirect-http-https'
+          properties: {
+            redirectType: 'Permanent'
+            targetListener: {
+              id: resourceId('Microsoft.Network/applicationGateways/httpListeners', agwName, 'listener443')
+            }
+            includePath: true
+            includeQueryString: true
           }
-          includePath: true
-          includeQueryString: true
         }
-      }
-    ] : []
-    sslCertificates: hasHttps ? [
-      {
-        name: 'ssl-cert'
-        properties: {
-          keyVaultSecretId: keyVaultSecretUri
+      ] : []
+    )
+    sslCertificates: concat(
+      hasHttps && !empty(keyVaultSecretUri) ? [
+        {
+          name: 'ssl-cert'
+          properties: {
+            keyVaultSecretId: keyVaultSecretUri
+          }
         }
-      }
-    ] : []
+      ] : []
+    )
+    globalConfiguration: {
+      enableRequestBuffering: true
+      enableResponseBuffering: false // turn off for HTTP Streamable responses
+    }
   }
 }
 

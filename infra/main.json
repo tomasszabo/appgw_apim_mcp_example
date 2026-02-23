@@ -1,0 +1,1304 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.40.2.10011",
+      "templateHash": "2343146090095830302"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "swedencentral",
+      "metadata": {
+        "description": "Deployment location"
+      }
+    },
+    "prefix": {
+      "type": "string",
+      "defaultValue": "mcp",
+      "metadata": {
+        "description": "Name prefix for all resources"
+      }
+    },
+    "publisherEmail": {
+      "type": "string",
+      "defaultValue": "someone@example.com",
+      "metadata": {
+        "description": "APIM publisher email"
+      }
+    },
+    "publisherName": {
+      "type": "string",
+      "defaultValue": "Someone",
+      "metadata": {
+        "description": "APIM publisher name"
+      }
+    },
+    "mcpApiAudience": {
+      "type": "string",
+      "metadata": {
+        "description": "OAuth2 audience, e.g. api://<api-app-id>"
+      }
+    },
+    "mcpClientAppId": {
+      "type": "string",
+      "metadata": {
+        "description": "OAuth2 client app ID from Entra"
+      }
+    },
+    "tenantId": {
+      "type": "string",
+      "metadata": {
+        "description": "Microsoft Entra tenant ID"
+      }
+    },
+    "mcpRequiredRole": {
+      "type": "string",
+      "defaultValue": "MCP.ReadWrite",
+      "metadata": {
+        "description": "Required OAuth2 app role for authorization (leave empty to skip role check)"
+      }
+    },
+    "mcpRequiredScope": {
+      "type": "string",
+      "defaultValue": "mcp.access",
+      "metadata": {
+        "description": "Required OAuth2 scope for authorization (leave empty to skip scope check)"
+      }
+    },
+    "existingKeyVaultId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Key Vault ID from separate deployment (deploy.sh Step 1). Format: /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.KeyVault/vaults/{name}. Leave empty for HTTP-only deployment."
+      }
+    },
+    "customDomainName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Custom domain name for HTTPS (e.g., api.example.com). Leave empty to use HTTP only."
+      }
+    },
+    "certificateName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of certificate in Key Vault (e.g., my-domain-cert). Used only if customDomainName is provided."
+      }
+    }
+  },
+  "variables": {
+    "mcpApiPath": "weather-mcp"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-monitoring', parameters('prefix'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "prefix": {
+            "value": "[parameters('prefix')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.40.2.10011",
+              "templateHash": "2097438984747160690"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2021-12-01-preview",
+              "name": "[format('{0}-law-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "sku": {
+                  "name": "PerGB2018"
+                },
+                "retentionInDays": 30
+              }
+            },
+            {
+              "type": "Microsoft.Insights/components",
+              "apiVersion": "2020-02-02",
+              "name": "[format('{0}-ai-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]",
+              "location": "[parameters('location')]",
+              "kind": "web",
+              "properties": {
+                "Application_Type": "web",
+                "RetentionInDays": 30,
+                "publicNetworkAccessForIngestion": "Enabled",
+                "publicNetworkAccessForQuery": "Enabled",
+                "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-law-{1}', parameters('prefix'), uniqueString(resourceGroup().id)))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-law-{1}', parameters('prefix'), uniqueString(resourceGroup().id)))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "appInsightsId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Insights/components', format('{0}-ai-{1}', parameters('prefix'), uniqueString(resourceGroup().id)))]"
+            },
+            "appInsightsInstrumentationKey": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Insights/components', format('{0}-ai-{1}', parameters('prefix'), uniqueString(resourceGroup().id))), '2020-02-02').InstrumentationKey]"
+            },
+            "appInsightsConnectionString": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Insights/components', format('{0}-ai-{1}', parameters('prefix'), uniqueString(resourceGroup().id))), '2020-02-02').ConnectionString]"
+            },
+            "logAnalyticsWorkspaceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-law-{1}', parameters('prefix'), uniqueString(resourceGroup().id)))]"
+            },
+            "appInsightsName": {
+              "type": "string",
+              "value": "[format('{0}-ai-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-net', parameters('prefix'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "prefix": {
+            "value": "[parameters('prefix')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.40.2.10011",
+              "templateHash": "7726454746706344826"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "vnetName": "[format('{0}-vnet-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]",
+            "pipName": "[format('{0}-agw-pip-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]",
+            "appGwSubnetName": "snet-appgw",
+            "appSvcIntegrationSubnetName": "snet-appsvc-integration",
+            "privateEndpointSubnetName": "snet-private-endpoints"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/virtualNetworks",
+              "apiVersion": "2023-11-01",
+              "name": "[variables('vnetName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "addressSpace": {
+                  "addressPrefixes": [
+                    "10.20.0.0/16"
+                  ]
+                },
+                "subnets": [
+                  {
+                    "name": "[variables('appGwSubnetName')]",
+                    "properties": {
+                      "addressPrefix": "10.20.1.0/24"
+                    }
+                  },
+                  {
+                    "name": "[variables('appSvcIntegrationSubnetName')]",
+                    "properties": {
+                      "addressPrefix": "10.20.2.0/24",
+                      "delegations": [
+                        {
+                          "name": "delegation",
+                          "properties": {
+                            "serviceName": "Microsoft.Web/serverFarms"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "[variables('privateEndpointSubnetName')]",
+                    "properties": {
+                      "addressPrefix": "10.20.3.0/24",
+                      "privateEndpointNetworkPolicies": "Disabled"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/publicIPAddresses",
+              "apiVersion": "2023-11-01",
+              "name": "[variables('pipName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard"
+              },
+              "properties": {
+                "publicIPAllocationMethod": "Static"
+              }
+            }
+          ],
+          "outputs": {
+            "vnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+            },
+            "pipId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/publicIPAddresses', variables('pipName'))]"
+            },
+            "pipAddress": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses', variables('pipName')), '2023-11-01').ipAddress]"
+            },
+            "appGwSubnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('appGwSubnetName'))]"
+            },
+            "appServiceIntegrationSubnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('appSvcIntegrationSubnetName'))]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-app', parameters('prefix'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "prefix": {
+            "value": "[parameters('prefix')]"
+          },
+          "appInsightsConnectionString": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-monitoring', parameters('prefix'))), '2025-04-01').outputs.appInsightsConnectionString.value]"
+          },
+          "tenantId": {
+            "value": "[parameters('tenantId')]"
+          },
+          "clientAppId": {
+            "value": "[parameters('mcpClientAppId')]"
+          },
+          "apiAudience": {
+            "value": "[parameters('mcpApiAudience')]"
+          },
+          "requiredRole": {
+            "value": "[parameters('mcpRequiredRole')]"
+          },
+          "requiredScope": {
+            "value": "[parameters('mcpRequiredScope')]"
+          },
+          "publicMcpBaseUrl": "[if(not(empty(parameters('customDomainName'))), createObject('value', format('https://{0}/{1}', parameters('customDomainName'), variables('mcpApiPath'))), createObject('value', format('http://{0}/{1}', reference(resourceId('Microsoft.Resources/deployments', format('{0}-net', parameters('prefix'))), '2025-04-01').outputs.pipAddress.value, variables('mcpApiPath'))))]"
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.40.2.10011",
+              "templateHash": "11039188339812969907"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": "string"
+            },
+            "appInsightsConnectionString": {
+              "type": "string"
+            },
+            "tenantId": {
+              "type": "string"
+            },
+            "clientAppId": {
+              "type": "string"
+            },
+            "apiAudience": {
+              "type": "string"
+            },
+            "publicMcpBaseUrl": {
+              "type": "string"
+            },
+            "requiredRole": {
+              "type": "string",
+              "defaultValue": "MCP.ReadWrite"
+            },
+            "requiredScope": {
+              "type": "string",
+              "defaultValue": "mcp.access"
+            }
+          },
+          "variables": {
+            "planName": "[format('{0}-asp-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]",
+            "webName": "[format('{0}-app-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Web/serverfarms",
+              "apiVersion": "2023-12-01",
+              "name": "[variables('planName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "P1v3",
+                "tier": "PremiumV3",
+                "capacity": 1
+              },
+              "properties": {
+                "reserved": true
+              }
+            },
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2023-12-01",
+              "name": "[variables('webName')]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+                "httpsOnly": true,
+                "siteConfig": {
+                  "linuxFxVersion": "DOTNETCORE|10.0",
+                  "alwaysOn": true,
+                  "appSettings": [
+                    {
+                      "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                      "value": "[parameters('appInsightsConnectionString')]"
+                    },
+                    {
+                      "name": "ApplicationInsightsAgent_EXTENSION_VERSION",
+                      "value": "~3"
+                    },
+                    {
+                      "name": "XDT_MicrosoftApplicationInsights_Mode",
+                      "value": "recommended"
+                    },
+                    {
+                      "name": "AzureAd__Instance",
+                      "value": "[format('{0}/', environment().authentication.loginEndpoint)]"
+                    },
+                    {
+                      "name": "AzureAd__TenantId",
+                      "value": "[parameters('tenantId')]"
+                    },
+                    {
+                      "name": "AzureAd__ClientId",
+                      "value": "[parameters('clientAppId')]"
+                    },
+                    {
+                      "name": "AzureAd__Audience",
+                      "value": "[parameters('apiAudience')]"
+                    },
+                    {
+                      "name": "AzureAd__RequiredRole",
+                      "value": "[parameters('requiredRole')]"
+                    },
+                    {
+                      "name": "AzureAd__RequiredScope",
+                      "value": "[parameters('requiredScope')]"
+                    },
+                    {
+                      "name": "AzureAd__EnableAuth",
+                      "value": "true"
+                    },
+                    {
+                      "name": "AzureAd__Authority",
+                      "value": "[format('{0}/common/v2.0', environment().authentication.loginEndpoint)]"
+                    },
+                    {
+                      "name": "PublicMcpBaseUrl",
+                      "value": "[parameters('publicMcpBaseUrl')]"
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "defaultHostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/sites', variables('webName')), '2023-12-01').defaultHostName]"
+            },
+            "webAppName": {
+              "type": "string",
+              "value": "[variables('webName')]"
+            },
+            "principalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/sites', variables('webName')), '2023-12-01', 'full').identity.principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', format('{0}-monitoring', parameters('prefix')))]",
+        "[resourceId('Microsoft.Resources/deployments', format('{0}-net', parameters('prefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-apim', parameters('prefix'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "prefix": {
+            "value": "[parameters('prefix')]"
+          },
+          "publisherEmail": {
+            "value": "[parameters('publisherEmail')]"
+          },
+          "publisherName": {
+            "value": "[parameters('publisherName')]"
+          },
+          "mcpBackendBaseUrl": {
+            "value": "[format('https://{0}', reference(resourceId('Microsoft.Resources/deployments', format('{0}-app', parameters('prefix'))), '2025-04-01').outputs.defaultHostName.value)]"
+          },
+          "tenantId": {
+            "value": "[parameters('tenantId')]"
+          },
+          "mcpApiAudience": {
+            "value": "[parameters('mcpApiAudience')]"
+          },
+          "requiredRole": {
+            "value": "[parameters('mcpRequiredRole')]"
+          },
+          "requiredScope": {
+            "value": "[parameters('mcpRequiredScope')]"
+          },
+          "appInsightsId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-monitoring', parameters('prefix'))), '2025-04-01').outputs.appInsightsId.value]"
+          },
+          "appInsightsInstrumentationKey": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-monitoring', parameters('prefix'))), '2025-04-01').outputs.appInsightsInstrumentationKey.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.40.2.10011",
+              "templateHash": "7375761338985871528"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": "string"
+            },
+            "publisherEmail": {
+              "type": "string"
+            },
+            "publisherName": {
+              "type": "string"
+            },
+            "mcpBackendBaseUrl": {
+              "type": "string",
+              "metadata": {
+                "description": "Base URL for MCP backend, e.g. https://<app>.azurewebsites.net"
+              }
+            },
+            "tenantId": {
+              "type": "string"
+            },
+            "mcpApiAudience": {
+              "type": "string",
+              "metadata": {
+                "description": "Audience for JWT validation (Identifier URI), e.g. api://<prefix>-mcp-api"
+              }
+            },
+            "requiredRole": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Expected role value for authorization, e.g. MCP.ReadWrite (leave empty to skip role check)"
+              }
+            },
+            "requiredScope": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Expected scope value for authorization, e.g. mcp.access (leave empty to skip scope check)"
+              }
+            },
+            "appInsightsId": {
+              "type": "string",
+              "metadata": {
+                "description": "Shared Application Insights resource ID"
+              }
+            },
+            "appInsightsInstrumentationKey": {
+              "type": "string",
+              "metadata": {
+                "description": "Shared Application Insights instrumentation key"
+              }
+            }
+          },
+          "variables": {
+            "apimName": "[format('{0}-apim-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]",
+            "apiName": "mcp",
+            "apiPath": "weather-mcp",
+            "appIdFromAudience": "[replace(parameters('mcpApiAudience'), 'api://', '')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ApiManagement/service",
+              "apiVersion": "2023-09-01-preview",
+              "name": "[variables('apimName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "StandardV2",
+                "capacity": 1
+              },
+              "properties": {
+                "publisherEmail": "[parameters('publisherEmail')]",
+                "publisherName": "[parameters('publisherName')]",
+                "publicNetworkAccess": "Enabled",
+                "virtualNetworkType": "None"
+              }
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}', variables('apimName'), variables('apiName'))]",
+              "properties": {
+                "displayName": "Weather MCP",
+                "description": "Model Context Protocol (MCP) platform with HTTP Streamable support and integrated tools/services",
+                "path": "[variables('apiPath')]",
+                "protocols": [
+                  "https"
+                ],
+                "serviceUrl": "[parameters('mcpBackendBaseUrl')]",
+                "subscriptionRequired": false
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service', variables('apimName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'mcp')]",
+              "properties": {
+                "displayName": "MCP Protocol Endpoint",
+                "description": "Model Context Protocol unified endpoint handling tool discovery and execution via JSON-RPC 2.0",
+                "method": "POST",
+                "urlTemplate": "/",
+                "request": {
+                  "queryParameters": [],
+                  "headers": [],
+                  "representations": [
+                    {
+                      "contentType": "application/json"
+                    }
+                  ]
+                },
+                "responses": [
+                  {
+                    "statusCode": 200,
+                    "description": "JSON-RPC 2.0 response",
+                    "representations": [
+                      {
+                        "contentType": "application/json"
+                      }
+                    ]
+                  },
+                  {
+                    "statusCode": 400,
+                    "description": "Invalid JSON-RPC request",
+                    "representations": [
+                      {
+                        "contentType": "application/json"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', variables('apimName'), variables('apiName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'health')]",
+              "properties": {
+                "displayName": "Health Check",
+                "description": "Server health status endpoint",
+                "method": "GET",
+                "urlTemplate": "/health",
+                "request": {
+                  "queryParameters": [],
+                  "headers": [],
+                  "representations": []
+                },
+                "responses": [
+                  {
+                    "statusCode": 200,
+                    "description": "Server is healthy",
+                    "representations": [
+                      {
+                        "contentType": "application/json"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', variables('apimName'), variables('apiName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}/{3}', variables('apimName'), variables('apiName'), 'health', 'policy')]",
+              "properties": {
+                "format": "xml",
+                "value": "<policies>\n  <inbound>\n    <!-- CORS policy for public health endpoint -->\n    <cors allow-credentials=\"false\">\n      <allowed-origins>\n        <origin>*</origin>\n      </allowed-origins>\n      <allowed-methods>\n        <method>GET</method>\n        <method>OPTIONS</method>\n      </allowed-methods>\n      <allowed-headers>\n        <header>*</header>\n      </allowed-headers>\n    </cors>\n    <!-- Skip API-level JWT validation for public health endpoint -->\n  </inbound>\n  <backend>\n    <base />\n  </backend>\n  <outbound>\n    <base />\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis/operations', variables('apimName'), variables('apiName'), 'health')]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'oauth-discovery')]",
+              "properties": {
+                "displayName": "OAuth Discovery",
+                "description": "OAuth 2.0 Authorization Server Metadata endpoint (RFC 8414)",
+                "method": "GET",
+                "urlTemplate": "/.well-known/oauth-authorization-server",
+                "request": {
+                  "queryParameters": [],
+                  "headers": [],
+                  "representations": []
+                },
+                "responses": [
+                  {
+                    "statusCode": 200,
+                    "description": "OAuth metadata",
+                    "representations": [
+                      {
+                        "contentType": "application/json"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', variables('apimName'), variables('apiName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}/{3}', variables('apimName'), variables('apiName'), 'oauth-discovery', 'policy')]",
+              "properties": {
+                "format": "xml",
+                "value": "<policies>\n  <inbound>\n    <!-- CORS policy for OAuth discovery endpoint -->\n    <cors allow-credentials=\"false\">\n      <allowed-origins>\n        <origin>*</origin>\n      </allowed-origins>\n      <allowed-methods>\n        <method>GET</method>\n        <method>OPTIONS</method>\n      </allowed-methods>\n      <allowed-headers>\n        <header>*</header>\n      </allowed-headers>\n    </cors>\n    <!-- Skip API-level JWT validation for public discovery endpoint -->\n  </inbound>\n  <backend>\n    <base />\n  </backend>\n  <outbound>\n    <base />\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis/operations', variables('apimName'), variables('apiName'), 'oauth-discovery')]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'protected-resource')]",
+              "properties": {
+                "displayName": "OAuth Protected Resource Metadata",
+                "description": "OAuth 2.0 Protected Resource Metadata for MCP (RFC 9728) - MANDATORY for Copilot Studio",
+                "method": "GET",
+                "urlTemplate": "/.well-known/oauth-protected-resource",
+                "request": {
+                  "queryParameters": [],
+                  "headers": [],
+                  "representations": []
+                },
+                "responses": [
+                  {
+                    "statusCode": 200,
+                    "description": "Protected resource metadata",
+                    "representations": [
+                      {
+                        "contentType": "application/json"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', variables('apimName'), variables('apiName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}/{3}', variables('apimName'), variables('apiName'), 'protected-resource', 'policy')]",
+              "properties": {
+                "format": "xml",
+                "value": "<policies>\n  <inbound>\n    <!-- CORS policy for OAuth protected resource endpoint -->\n    <cors allow-credentials=\"false\">\n      <allowed-origins>\n        <origin>*</origin>\n      </allowed-origins>\n      <allowed-methods>\n        <method>GET</method>\n        <method>OPTIONS</method>\n      </allowed-methods>\n      <allowed-headers>\n        <header>*</header>\n      </allowed-headers>\n    </cors>\n    <!-- Skip API-level JWT validation for public discovery endpoint -->\n  </inbound>\n  <backend>\n    <base />\n  </backend>\n  <outbound>\n    <base />\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis/operations', variables('apimName'), variables('apiName'), 'protected-resource')]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/policies",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'policy')]",
+              "properties": {
+                "format": "xml",
+                "value": "[format('<policies>\n  <inbound>\n    <base />\n    \n    <!-- CORS policy for MCP clients -->\n    <cors allow-credentials=\"false\">\n      <allowed-origins>\n        <origin>*</origin>\n      </allowed-origins>\n      <allowed-methods>\n        <method>GET</method>\n        <method>POST</method>\n        <method>PUT</method>\n        <method>DELETE</method>\n        <method>OPTIONS</method>\n      </allowed-methods>\n      <allowed-headers>\n        <header>*</header>\n      </allowed-headers>\n      <expose-headers>\n        <header>*</header>\n      </expose-headers>\n    </cors>\n    \n    <!-- Rate limiting: 1000 requests per minute -->\n    <rate-limit calls=\"1000\" renewal-period=\"60\" />\n    \n    <!-- Validate JWT access token issued by Entra ID -->\n    <validate-jwt\n      header-name=\"Authorization\"\n      require-scheme=\"Bearer\"\n      require-expiration-time=\"true\"\n      require-signed-tokens=\"true\"\n      failed-validation-httpcode=\"401\"\n      failed-validation-error-message=\"Unauthorized\">\n\n      <openid-config\n        url=\"{0}{1}/v2.0/.well-known/openid-configuration\" />\n\n      <audiences>\n        <audience>{2}</audience>\n        <audience>{3}</audience>\n        <audience>00000002-0000-0000-c000-000000000000</audience> <!-- Microsoft Graph audience used by Copilot Studio -->\n      </audiences>\n\n      <issuers>\n        <issuer>{4}{5}/</issuer>\n        <issuer>{6}{7}/v2.0</issuer>\n      </issuers>\n\n    </validate-jwt>\n    \n    <!-- Extract token claims for validation -->\n    <set-variable name=\"tokenScopes\" value=\"@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;scp&quot;, &quot;&quot;))\" />\n    <set-variable name=\"tokenRoles\" value=\"@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;roles&quot;, &quot;&quot;))\" />\n    \n    <!-- Validate that token has required scope or role -->\n    <set-variable name=\"hasRequiredRole\" value=\"@(string.IsNullOrEmpty(&quot;{8}&quot;) || ((string)context.Variables[&quot;tokenRoles&quot;] ?? &quot;&quot;).Split(&apos; &apos;).Contains(&quot;{9}&quot;))\" />\n    <set-variable name=\"hasRequiredScope\" value=\"@(string.IsNullOrEmpty(&quot;{10}&quot;) || ((string)context.Variables[&quot;tokenScopes&quot;] ?? &quot;&quot;).Split(&apos; &apos;).Contains(&quot;{11}&quot;))\" />\n    \n    <choose>\n      <when condition=\"@((bool)context.Variables[&quot;hasRequiredRole&quot;] || (bool)context.Variables[&quot;hasRequiredScope&quot;])\">\n        <!-- Valid scope or role found, continue -->\n      </when>\n      <otherwise>\n        <return-response>\n          <set-status code=\"403\" reason=\"Forbidden\" />\n          <set-header name=\"Content-Type\" exists-action=\"override\">\n            <value>application/json</value>\n          </set-header>\n          <set-body>{{&quot;error&quot;:&quot;insufficient_scope&quot;,&quot;error_description&quot;:&quot;Token missing required role ({12}) or scope ({13})&quot;}}</set-body>\n        </return-response>\n      </otherwise>\n    </choose>\n    \n    <!-- Set backend address based on context -->\n    <set-backend-service base-url=\"{14}\" />\n    \n    <!-- Authorization header is automatically forwarded to backend for MCP server validation -->\n  </inbound>\n\n  <backend>\n    <base />\n  </backend>\n\n  <outbound>\n    <base />\n  </outbound>\n\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n', environment().authentication.loginEndpoint, parameters('tenantId'), parameters('mcpApiAudience'), variables('appIdFromAudience'), replace(environment().authentication.loginEndpoint, 'login.microsoftonline.com/', 'sts.windows.net/'), parameters('tenantId'), environment().authentication.loginEndpoint, parameters('tenantId'), parameters('requiredRole'), parameters('requiredRole'), parameters('requiredScope'), parameters('requiredScope'), parameters('requiredRole'), parameters('requiredScope'), parameters('mcpBackendBaseUrl'))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', variables('apimName'), variables('apiName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/loggers",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}', variables('apimName'), 'app-insights-logger')]",
+              "properties": {
+                "loggerType": "applicationInsights",
+                "description": "Application Insights logger for MCP API",
+                "resourceId": "[parameters('appInsightsId')]",
+                "credentials": {
+                  "instrumentationKey": "[parameters('appInsightsInstrumentationKey')]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service', variables('apimName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/diagnostics",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}', variables('apimName'), 'applicationinsights')]",
+              "properties": {
+                "loggerId": "[resourceId('Microsoft.ApiManagement/service/loggers', variables('apimName'), 'app-insights-logger')]",
+                "alwaysLog": "allErrors",
+                "logClientIp": true,
+                "httpCorrelationProtocol": "W3C",
+                "verbosity": "verbose",
+                "sampling": {
+                  "samplingType": "fixed",
+                  "percentage": 100
+                },
+                "frontend": {
+                  "request": {
+                    "headers": [
+                      "Authorization"
+                    ],
+                    "body": {
+                      "bytes": 8192
+                    }
+                  },
+                  "response": {
+                    "body": {
+                      "bytes": 8192
+                    }
+                  }
+                },
+                "backend": {
+                  "request": {
+                    "body": {
+                      "bytes": 8192
+                    }
+                  },
+                  "response": {
+                    "body": {
+                      "bytes": 8192
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service', variables('apimName'))]",
+                "[resourceId('Microsoft.ApiManagement/service/loggers', variables('apimName'), 'app-insights-logger')]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/diagnostics",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'applicationinsights')]",
+              "properties": {
+                "loggerId": "[resourceId('Microsoft.ApiManagement/service/loggers', variables('apimName'), 'app-insights-logger')]",
+                "alwaysLog": "allErrors",
+                "logClientIp": true,
+                "httpCorrelationProtocol": "W3C",
+                "verbosity": "verbose",
+                "sampling": {
+                  "samplingType": "fixed",
+                  "percentage": 100
+                },
+                "frontend": {
+                  "request": {
+                    "headers": [
+                      "Authorization"
+                    ],
+                    "body": {
+                      "bytes": 8192
+                    }
+                  },
+                  "response": {
+                    "body": {
+                      "bytes": 8192
+                    }
+                  }
+                },
+                "backend": {
+                  "request": {
+                    "body": {
+                      "bytes": 8192
+                    }
+                  },
+                  "response": {
+                    "body": {
+                      "bytes": 8192
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/loggers', variables('apimName'), 'app-insights-logger')]",
+                "[resourceId('Microsoft.ApiManagement/service/apis', variables('apimName'), variables('apiName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "apimName": {
+              "type": "string",
+              "value": "[variables('apimName')]"
+            },
+            "apimGatewayHostname": {
+              "type": "string",
+              "value": "[format('{0}.azure-api.net', variables('apimName'))]"
+            },
+            "mcpApiBaseUrl": {
+              "type": "string",
+              "value": "[format('https://{0}.azure-api.net/{1}', variables('apimName'), variables('apiPath'))]"
+            },
+            "mcpEndpointUrl": {
+              "type": "string",
+              "value": "[format('https://{0}.azure-api.net/{1}/', variables('apimName'), variables('apiPath'))]"
+            },
+            "healthCheckUrl": {
+              "type": "string",
+              "value": "[format('https://{0}.azure-api.net/{1}/health', variables('apimName'), variables('apiPath'))]"
+            },
+            "oauthDiscoveryUrl": {
+              "type": "string",
+              "value": "[format('https://{0}.azure-api.net/{1}/.well-known/oauth-authorization-server', variables('apimName'), variables('apiPath'))]"
+            },
+            "oauthProtectedResourceUrl": {
+              "type": "string",
+              "value": "[format('https://{0}.azure-api.net/{1}/.well-known/oauth-protected-resource', variables('apimName'), variables('apiPath'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', format('{0}-app', parameters('prefix')))]",
+        "[resourceId('Microsoft.Resources/deployments', format('{0}-monitoring', parameters('prefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-appgw', parameters('prefix'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "prefix": {
+            "value": "[parameters('prefix')]"
+          },
+          "appGwSubnetId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-net', parameters('prefix'))), '2025-04-01').outputs.appGwSubnetId.value]"
+          },
+          "pipId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-net', parameters('prefix'))), '2025-04-01').outputs.pipId.value]"
+          },
+          "apimGatewayHostname": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix'))), '2025-04-01').outputs.apimGatewayHostname.value]"
+          },
+          "keyVaultId": {
+            "value": "[parameters('existingKeyVaultId')]"
+          },
+          "customDomainName": {
+            "value": "[parameters('customDomainName')]"
+          },
+          "certificateName": {
+            "value": "[parameters('certificateName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.40.2.10011",
+              "templateHash": "1124702298885722278"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": "string"
+            },
+            "appGwSubnetId": {
+              "type": "string"
+            },
+            "pipId": {
+              "type": "string"
+            },
+            "apimGatewayHostname": {
+              "type": "string",
+              "metadata": {
+                "description": "APIM gateway hostname, e.g. <apim>.azure-api.net"
+              }
+            },
+            "keyVaultId": {
+              "type": "string",
+              "metadata": {
+                "description": "Key Vault resource ID for storing SSL certificate (e.g., /subscriptions/.../resourceGroups/.../providers/Microsoft.KeyVault/vaults/my-keyvault)"
+              }
+            },
+            "customDomainName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Custom domain name for HTTPS (e.g., api.example.com). Set to empty string to skip HTTPS setup."
+              }
+            },
+            "certificateName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Name of the certificate in Key Vault (e.g., my-domain-cert). The certificate must already exist in Key Vault."
+              }
+            }
+          },
+          "variables": {
+            "wafPolicyName": "[format('{0}-wafpol-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]",
+            "agwName": "[format('{0}-agw-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]",
+            "hasHttps": "[and(not(empty(parameters('customDomainName'))), not(empty(parameters('certificateName'))))]",
+            "keyVaultName": "[if(not(empty(parameters('keyVaultId'))), split(parameters('keyVaultId'), '/')[8], '')]",
+            "keyVaultSecretUri": "[if(not(empty(parameters('keyVaultId'))), format('https://{0}.vault.azure.net/secrets/{1}', variables('keyVaultName'), parameters('certificateName')), '')]"
+          },
+          "resources": [
+            {
+              "condition": "[variables('hasHttps')]",
+              "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+              "apiVersion": "2023-01-31",
+              "name": "[format('{0}-agw-identity-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]",
+              "location": "[parameters('location')]"
+            },
+            {
+              "condition": "[and(variables('hasHttps'), not(empty(parameters('keyVaultId'))))]",
+              "type": "Microsoft.KeyVault/vaults/accessPolicies",
+              "apiVersion": "2023-07-01",
+              "name": "[format('{0}/add', split(parameters('keyVaultId'), '/')[8])]",
+              "properties": {
+                "accessPolicies": [
+                  {
+                    "tenantId": "[subscription().tenantId]",
+                    "objectId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agw-identity-{1}', parameters('prefix'), uniqueString(resourceGroup().id))), '2023-01-31').principalId]",
+                    "permissions": {
+                      "secrets": [
+                        "get",
+                        "list"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agw-identity-{1}', parameters('prefix'), uniqueString(resourceGroup().id)))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies",
+              "apiVersion": "2023-11-01",
+              "name": "[variables('wafPolicyName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "policySettings": {
+                  "mode": "Detection"
+                },
+                "managedRules": {
+                  "managedRuleSets": [
+                    {
+                      "ruleSetType": "OWASP",
+                      "ruleSetVersion": "3.2"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Network/applicationGateways",
+              "apiVersion": "2024-10-01",
+              "name": "[variables('agwName')]",
+              "location": "[parameters('location')]",
+              "identity": "[if(variables('hasHttps'), createObject('type', 'UserAssigned', 'userAssignedIdentities', createObject(format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agw-identity-{1}', parameters('prefix'), uniqueString(resourceGroup().id)))), createObject())), null())]",
+              "properties": {
+                "sku": {
+                  "name": "WAF_v2",
+                  "tier": "WAF_v2",
+                  "capacity": 1
+                },
+                "firewallPolicy": {
+                  "id": "[resourceId('Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies', variables('wafPolicyName'))]"
+                },
+                "gatewayIPConfigurations": [
+                  {
+                    "name": "gwipcfg",
+                    "properties": {
+                      "subnet": {
+                        "id": "[parameters('appGwSubnetId')]"
+                      }
+                    }
+                  }
+                ],
+                "frontendIPConfigurations": [
+                  {
+                    "name": "feip",
+                    "properties": {
+                      "publicIPAddress": {
+                        "id": "[resourceId('Microsoft.Network/publicIPAddresses', split(parameters('pipId'), '/')[8])]"
+                      }
+                    }
+                  }
+                ],
+                "frontendPorts": "[concat(createArray(createObject('name', 'feport80', 'properties', createObject('port', 80))), if(variables('hasHttps'), createArray(createObject('name', 'feport443', 'properties', createObject('port', 443))), createArray()))]",
+                "backendAddressPools": [
+                  {
+                    "name": "be-apim",
+                    "properties": {
+                      "backendAddresses": [
+                        {
+                          "fqdn": "[parameters('apimGatewayHostname')]"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "backendHttpSettingsCollection": [
+                  {
+                    "name": "bhs-https",
+                    "properties": {
+                      "port": 443,
+                      "protocol": "Https",
+                      "pickHostNameFromBackendAddress": true,
+                      "requestTimeout": 60,
+                      "probe": {
+                        "id": "[resourceId('Microsoft.Network/applicationGateways/probes', variables('agwName'), 'probe-apim')]"
+                      }
+                    }
+                  }
+                ],
+                "probes": [
+                  {
+                    "name": "probe-apim",
+                    "properties": {
+                      "protocol": "Https",
+                      "path": "/status-0123456789abcdef",
+                      "interval": 30,
+                      "timeout": 30,
+                      "unhealthyThreshold": 3,
+                      "pickHostNameFromBackendHttpSettings": true,
+                      "match": {
+                        "statusCodes": [
+                          "200-399"
+                        ]
+                      }
+                    }
+                  }
+                ],
+                "httpListeners": "[concat(createArray(createObject('name', 'listener80', 'properties', createObject('frontendIPConfiguration', createObject('id', resourceId('Microsoft.Network/applicationGateways/frontendIPConfigurations', variables('agwName'), 'feip')), 'frontendPort', createObject('id', resourceId('Microsoft.Network/applicationGateways/frontendPorts', variables('agwName'), 'feport80')), 'protocol', 'Http'))), if(variables('hasHttps'), createArray(createObject('name', 'listener443', 'properties', createObject('frontendIPConfiguration', createObject('id', resourceId('Microsoft.Network/applicationGateways/frontendIPConfigurations', variables('agwName'), 'feip')), 'frontendPort', createObject('id', resourceId('Microsoft.Network/applicationGateways/frontendPorts', variables('agwName'), 'feport443')), 'protocol', 'Https', 'sslCertificate', createObject('id', resourceId('Microsoft.Network/applicationGateways/sslCertificates', variables('agwName'), 'ssl-cert')), 'hostNames', createArray(parameters('customDomainName'))))), createArray()))]",
+                "requestRoutingRules": "[concat(if(variables('hasHttps'), createArray(createObject('name', 'rule-redirect-http', 'properties', createObject('ruleType', 'Basic', 'httpListener', createObject('id', resourceId('Microsoft.Network/applicationGateways/httpListeners', variables('agwName'), 'listener80')), 'redirectConfiguration', createObject('id', resourceId('Microsoft.Network/applicationGateways/redirectConfigurations', variables('agwName'), 'redirect-http-https')), 'priority', 100))), createArray(createObject('name', 'rule80', 'properties', createObject('ruleType', 'Basic', 'httpListener', createObject('id', resourceId('Microsoft.Network/applicationGateways/httpListeners', variables('agwName'), 'listener80')), 'backendAddressPool', createObject('id', resourceId('Microsoft.Network/applicationGateways/backendAddressPools', variables('agwName'), 'be-apim')), 'backendHttpSettings', createObject('id', resourceId('Microsoft.Network/applicationGateways/backendHttpSettingsCollection', variables('agwName'), 'bhs-https')), 'priority', 100)))), if(variables('hasHttps'), createArray(createObject('name', 'rule443', 'properties', createObject('ruleType', 'Basic', 'httpListener', createObject('id', resourceId('Microsoft.Network/applicationGateways/httpListeners', variables('agwName'), 'listener443')), 'backendAddressPool', createObject('id', resourceId('Microsoft.Network/applicationGateways/backendAddressPools', variables('agwName'), 'be-apim')), 'backendHttpSettings', createObject('id', resourceId('Microsoft.Network/applicationGateways/backendHttpSettingsCollection', variables('agwName'), 'bhs-https')), 'priority', 110))), createArray()))]",
+                "redirectConfigurations": "[concat(if(variables('hasHttps'), createArray(createObject('name', 'redirect-http-https', 'properties', createObject('redirectType', 'Permanent', 'targetListener', createObject('id', resourceId('Microsoft.Network/applicationGateways/httpListeners', variables('agwName'), 'listener443')), 'includePath', true(), 'includeQueryString', true()))), createArray()))]",
+                "sslCertificates": "[concat(if(and(variables('hasHttps'), not(empty(variables('keyVaultSecretUri')))), createArray(createObject('name', 'ssl-cert', 'properties', createObject('keyVaultSecretId', variables('keyVaultSecretUri')))), createArray()))]",
+                "globalConfiguration": {
+                  "enableRequestBuffering": true,
+                  "enableResponseBuffering": false
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agw-identity-{1}', parameters('prefix'), uniqueString(resourceGroup().id)))]",
+                "[resourceId('Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies', variables('wafPolicyName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "appGatewayName": {
+              "type": "string",
+              "value": "[variables('agwName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix')))]",
+        "[resourceId('Microsoft.Resources/deployments', format('{0}-net', parameters('prefix')))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "appGatewayPublicIp": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-net', parameters('prefix'))), '2025-04-01').outputs.pipAddress.value]"
+    },
+    "apimGatewayHostname": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix'))), '2025-04-01').outputs.apimGatewayHostname.value]"
+    },
+    "publicMcpBaseUrl": {
+      "type": "string",
+      "value": "[if(not(empty(parameters('customDomainName'))), format('https://{0}/{1}', parameters('customDomainName'), variables('mcpApiPath')), format('http://{0}/{1}', reference(resourceId('Microsoft.Resources/deployments', format('{0}-net', parameters('prefix'))), '2025-04-01').outputs.pipAddress.value, variables('mcpApiPath')))]"
+    },
+    "publicMcpBaseUrlHttp": {
+      "type": "string",
+      "value": "[format('http://{0}/{1}', reference(resourceId('Microsoft.Resources/deployments', format('{0}-net', parameters('prefix'))), '2025-04-01').outputs.pipAddress.value, variables('mcpApiPath'))]"
+    },
+    "publicMcpBaseUrlHttps": {
+      "type": "string",
+      "value": "[if(not(empty(parameters('customDomainName'))), format('https://{0}/{1}', parameters('customDomainName'), variables('mcpApiPath')), 'HTTPS not configured')]"
+    },
+    "mcpApiPath": {
+      "type": "string",
+      "value": "[variables('mcpApiPath')]"
+    },
+    "mcpApiBaseUrl": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix'))), '2025-04-01').outputs.mcpApiBaseUrl.value]"
+    },
+    "mcpEndpointUrl": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix'))), '2025-04-01').outputs.mcpEndpointUrl.value]"
+    },
+    "healthCheckUrl": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix'))), '2025-04-01').outputs.healthCheckUrl.value]"
+    },
+    "oauthDiscoveryUrl": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix'))), '2025-04-01').outputs.oauthDiscoveryUrl.value]"
+    },
+    "oauthProtectedResourceUrl": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix'))), '2025-04-01').outputs.oauthProtectedResourceUrl.value]"
+    },
+    "appServiceUrl": {
+      "type": "string",
+      "value": "[format('https://{0}', reference(resourceId('Microsoft.Resources/deployments', format('{0}-app', parameters('prefix'))), '2025-04-01').outputs.defaultHostName.value)]"
+    },
+    "appServiceName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-app', parameters('prefix'))), '2025-04-01').outputs.webAppName.value]"
+    },
+    "keyVaultId": {
+      "type": "string",
+      "value": "[parameters('existingKeyVaultId')]"
+    },
+    "keyVaultName": {
+      "type": "string",
+      "value": "[if(not(empty(parameters('existingKeyVaultId'))), split(parameters('existingKeyVaultId'), '/')[8], '')]"
+    },
+    "resourceGroupName": {
+      "type": "string",
+      "value": "[resourceGroup().name]"
+    },
+    "appInsightsInstrumentationKey": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-monitoring', parameters('prefix'))), '2025-04-01').outputs.appInsightsInstrumentationKey.value]"
+    },
+    "appInsightsConnectionString": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-monitoring', parameters('prefix'))), '2025-04-01').outputs.appInsightsConnectionString.value]"
+    }
+  }
+}

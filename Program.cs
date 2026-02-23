@@ -1,13 +1,28 @@
 using ModelContextProtocol.Server;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Identity.Web;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using MCPWeatherServer.Services;
+using MCPWeatherServer.Models;
 using MCPWeatherServer.Tools;
+
+// Helper method to build scopes_supported list from role and scope configuration
+static string[] GetScopesSupported(string requiredRole, string requiredScope)
+{
+    var scopes = new List<string>();
+    if (!string.IsNullOrEmpty(requiredRole)) scopes.Add(requiredRole);
+    if (!string.IsNullOrEmpty(requiredScope)) scopes.Add(requiredScope);
+    return scopes.Count > 0 ? scopes.Distinct().ToArray() : new[] { "openid", "profile", "email" };
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,7 +46,9 @@ builder.Services.AddCors(options =>
 // Configure Azure AD / OAuth2 authentication if enabled
 var azureAd = builder.Configuration.GetSection("AzureAd");
 var tenantId = builder.Configuration["AzureAd:TenantId"];
-var audience = builder.Configuration["AzureAd:Audience"];
+var audiences = builder.Configuration.GetSection("AzureAd:Audience").Get<string[]>() ?? Array.Empty<string>();
+var primaryAudience = audiences.Length > 0 ? audiences[0] : string.Empty; // First audience for metadata
+var requiredRole = builder.Configuration["AzureAd:RequiredRole"];
 var requiredScope = builder.Configuration["AzureAd:RequiredScope"];
 var enableAuth = builder.Configuration.GetValue<bool>("AzureAd:EnableAuth", false);
 
@@ -41,33 +58,68 @@ if (enableAuth)
         .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         .AddMicrosoftIdentityWebApi(options =>
         {
-            builder.Configuration.Bind("AzureAd", options);
-            
-            // Configure token validation to accept both api://appId and just appId as valid audiences
+            // Don't bind Audience - we handle it manually below as an array
+            // Configure token validation to accept multiple audiences
             options.TokenValidationParameters.ValidateAudience = true;
-            var configuredAudience = builder.Configuration["AzureAd:Audience"];
-            if (!string.IsNullOrEmpty(configuredAudience))
+            options.TokenValidationParameters.ValidateIssuer = true;
+            
+            // Accept both v1.0 and v2.0 issuer formats
+            if (!string.IsNullOrEmpty(tenantId))
             {
-                // Extract app ID from api://appId format
-                var appId = configuredAudience.Replace("api://", "");
-                // Accept both formats
-                options.TokenValidationParameters.ValidAudiences = new[] { configuredAudience, appId };
+                options.TokenValidationParameters.ValidIssuers = new[]
+                {
+                    $"https://sts.windows.net/{tenantId}/",  // v1.0 endpoint
+                    $"https://login.microsoftonline.com/{tenantId}/v2.0"  // v2.0 endpoint
+                };
             }
+            
+            if (audiences.Length > 0)
+            {
+                var validAudiences = new List<string>();
+                
+                foreach (var aud in audiences)
+                {
+                    validAudiences.Add(aud);
+                    // Also add version without api:// prefix if present
+                    if (aud.StartsWith("api://"))
+                    {
+                        validAudiences.Add(aud.Replace("api://", ""));
+                    }
+                }
+                
+                options.TokenValidationParameters.ValidAudiences = validAudiences.ToArray();
+            }
+            
+            // Add JWT bearer events for debugging and better error handling
+            options.Events = new JwtBearerEvents
+            {
+                OnAuthenticationFailed = context =>
+                {
+                    var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+                    logger.LogError(context.Exception, "JWT authentication failed: {Message}", context.Exception.Message);
+                    return Task.CompletedTask;
+                },
+                OnTokenValidated = context =>
+                {
+                    var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+                    var claims = context.Principal?.Claims.Select(c => $"{c.Type}={c.Value}");
+                    logger.LogInformation("JWT token validated successfully. Claims: {Claims}", string.Join(", ", claims ?? Array.Empty<string>()));
+                    return Task.CompletedTask;
+                },
+                OnChallenge = context =>
+                {
+                    var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+                    logger.LogWarning("JWT authentication challenge: {Error} - {ErrorDescription}", context.Error, context.ErrorDescription);
+                    return Task.CompletedTask;
+                }
+            };
         },
         options =>
         {
-            builder.Configuration.Bind("AzureAd", options);
-        });
-
-    builder.Services.AddAuthorizationBuilder()
-        .AddPolicy("McpAccess", policy =>
-        {
-            policy.RequireAuthenticatedUser();
-            var requiredScope = azureAd["RequiredScope"];
-            if (!string.IsNullOrEmpty(requiredScope))
-            {
-                policy.RequireClaim("scp", requiredScope);
-            }
+            // Bind Instance, TenantId, ClientId, etc - but Audience will be ignored since it's an array
+            options.Instance = builder.Configuration["AzureAd:Instance"];
+            options.TenantId = builder.Configuration["AzureAd:TenantId"];
+            options.ClientId = builder.Configuration["AzureAd:ClientId"];
         });
 }
 
@@ -91,23 +143,18 @@ if (enableAuth)
 // Map MCP server endpoints
 app.MapMcp();
 
-// OAuth 2.0 Authorization Server Metadata endpoint (RFC 8414)
-// REQUIRED FIELDS for Copilot Studio: issuer, authorization_endpoint, token_endpoint,
-// grant_types_supported, token_endpoint_auth_methods_supported, code_challenge_methods_supported
-app.MapGet("/.well-known/oauth-authorization-server", () =>
+// OpenID Connect Discovery endpoint - redirect to Azure AD's OIDC configuration
+// This is what Copilot Studio and other OAuth/OIDC clients will query first
+app.MapGet("/.well-known/openid-configuration", () =>
 {
-    // Return metadata even when auth is disabled - clients need this for discovery
     if (string.IsNullOrEmpty(tenantId) || tenantId == "common" || tenantId == "YOUR_API_APP_ID_HERE")
     {
-        // Auth not configured - return minimal metadata indicating no OAuth support
-        // WARNING: TenantId "common" will NOT work with Copilot Studio token acquisition!
-        // You MUST use your actual tenant ID for Copilot Studio integration.
+        // Auth not configured - return minimal metadata
         var metadata = new
         {
             mcp_server_version = "1.0.0",
-            mcp_oauth_mode = "disabled",
             auth_enabled = false,
-            message = "OAuth authentication is not configured on this server",
+            message = "OpenID Connect authentication is not configured on this server",
             warning = tenantId == "common" 
                 ? "TenantId 'common' detected - this will NOT work with Copilot Studio. Use your actual tenant ID."
                 : null
@@ -115,100 +162,35 @@ app.MapGet("/.well-known/oauth-authorization-server", () =>
         return Results.Ok(metadata);
     }
 
-    var authorizationEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize";
-    var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
-    var issuer = $"https://login.microsoftonline.com/{tenantId}/v2.0";
-    
-    // All required fields per Copilot Studio requirements + additional Microsoft Entra fields
-    var fullMetadata = new
-    {
-        // === REQUIRED by Copilot Studio ===
-        issuer = issuer,
-        authorization_endpoint = authorizationEndpoint,
-        token_endpoint = tokenEndpoint,
-        grant_types_supported = new[] { "authorization_code", "implicit", "client_credentials" },
-        token_endpoint_auth_methods_supported = new[] { "client_secret_post", "client_secret_basic", "private_key_jwt" },
-        code_challenge_methods_supported = new[] { "plain", "S256" },
-        
-        // === Additional Microsoft Entra / OpenID Connect fields ===
-        jwks_uri = $"https://login.microsoftonline.com/{tenantId}/discovery/v2.0/keys",
-        response_types_supported = new[] { "code", "token", "id_token", "code id_token", "id_token token" },
-        response_modes_supported = new[] { "query", "fragment", "form_post" },
-        subject_types_supported = new[] { "pairwise" },
-        scopes_supported = !string.IsNullOrEmpty(requiredScope) 
-            ? new[] { "openid", "profile", "email", requiredScope }
-            : new[] { "openid", "profile", "email" },
-        claims_supported = new[] { "sub", "iss", "aud", "exp", "iat", "auth_time", "acr", "nonce", "preferred_username", "name", "tid", "ver", "at_hash", "c_hash", "email" },
-        
-        // === MCP-specific fields ===
-        audience = audience,
-        mcp_server_version = "1.0.0",
-        mcp_oauth_mode = enableAuth ? "enabled" : "configured_but_disabled",
-        auth_enabled = enableAuth
-    };
-
-    return Results.Ok(fullMetadata);
-});
-
-// OAuth 2.0 Protected Resource Metadata endpoint (RFC 9728) - MANDATORY for MCP
-// REQUIRED FIELDS for Copilot Studio: resource, authorization_servers
-app.MapGet("/.well-known/oauth-protected-resource", (IConfiguration config, HttpContext context) =>
-{
-    // Use configured public URL (for App Gateway/APIM scenarios) or derive from request
-    // CRITICAL: This must exactly match the MCP base URL configured in Copilot Studio
-    var publicUrl = config["PublicMcpBaseUrl"];
-    var baseUrl = !string.IsNullOrEmpty(publicUrl) && !publicUrl.Contains("YOUR_")
-        ? publicUrl.TrimEnd('/')
-        : $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}".TrimEnd('/');
-    
-    // Return metadata even when auth is disabled - clients need this for discovery
-    if (string.IsNullOrEmpty(tenantId) || tenantId == "common" || tenantId == "YOUR_API_APP_ID_HERE")
-    {
-        // Auth not configured - return minimal required fields
-        var metadata = new
-        {
-            // === REQUIRED by Copilot Studio ===
-            resource = baseUrl,  // CRITICAL: Must exactly match MCP base URL - no trailing slash mismatch allowed
-            authorization_servers = new string[] { },  // Empty when auth not configured
-            
-            // === MCP-specific fields ===
-            mcp_server_version = "1.0.0",
-            auth_enabled = false
-        };
-        return Results.Ok(metadata);
-    }
-
-    var authorizationEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize";
-    var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
-    var issuer = $"https://login.microsoftonline.com/{tenantId}/v2.0";
-    
-    // All required fields per Copilot Studio requirements + additional RFC 9728 fields
-    var fullMetadata = new
-    {
-        // === REQUIRED by Copilot Studio ===
-        resource = baseUrl,  // CRITICAL: Must exactly match MCP base URL - no trailing slash mismatch allowed
-        authorization_servers = new[] { issuer },
-        
-        // === Additional RFC 9728 / Microsoft Entra fields ===
-        bearer_methods_supported = new[] { "header" },
-        resource_signing_alg_values_supported = new[] { "RS256" },
-        authorization_endpoint = authorizationEndpoint,
-        token_endpoint = tokenEndpoint,
-        issuer = issuer,
-        scopes_supported = !string.IsNullOrEmpty(requiredScope) 
-            ? new[] { requiredScope }
-            : new string[] { },
-        
-        // === MCP-specific fields ===
-        mcp_server_version = "1.0.0",
-        auth_enabled = enableAuth
-    };
-
-    return Results.Ok(fullMetadata);
+    // Redirect to Azure AD's OpenID Connect configuration endpoint
+    var oidcConfigUrl = $"https://login.microsoftonline.com/{tenantId}/v2.0/.well-known/openid-configuration";
+    return Results.Redirect(oidcConfigUrl, permanent: false);
 });
 
 // Health check endpoint
 app.MapGet("/health", () =>
     Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
+
+// ===== REST API Endpoints for Weather Data =====
+
+// GET /api/weather/{location} - Get current weather for a location
+app.MapGet("/api/weather/{location}", async (string location, WeatherService weatherService, AuthorizationService authService) =>
+{
+    try
+    {
+        authService.RequireAuthorization();
+        var request = new WeatherRequest { Location = location, Date = DateTime.UtcNow };
+        var weather = await weatherService.GetWeatherDataAsync(request);
+        return Results.Ok(weather);
+    }
+    catch (UnauthorizedAccessException ex)
+    {
+        return Results.Unauthorized();
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
 
 app.Run();

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Enterprise-grade MCP (Model Context Protocol) weather server with OAuth 2.0 authentication, deployed on Azure with API Management, Application Gateway, and optional HTTPS support.
+Example of an MCP (Model Context Protocol) weather server with OAuth 2.0 authentication, deployed on Azure with API Management, Application Gateway, and optional HTTPS support.
 
 **Architecture:**
 - **.NET 10.0 MCP Server** (App Service) - Provides weather data via MCP protocol
@@ -34,37 +34,12 @@ Enterprise-grade MCP (Model Context Protocol) weather server with OAuth 2.0 auth
    - `jq` - JSON parsing in deployment scripts
    - `bash` or `zsh` - Script execution
 
-4. **For HTTPS deployment (optional):**
+4. **For HTTPS deployment (required for Copilot Studio and OAuth2 authentication):**
    - Valid SSL certificate in `.pfx` format (not self-signed)
    - Certificate password
    - Custom domain name with ability to configure DNS
 
 ## Deployment
-
-### Option 1: HTTP Only (Quick Start)
-
-Deploy without HTTPS for testing or development:
-
-```bash
-cd infra
-
-# Optional: Configure deployment settings
-export LOCATION="swedencentral"         # Azure region
-export PREFIX="mcp"                      # Resource name prefix
-export RG_NAME="apim-mcp-rg"            # Resource group name
-
-# Deploy
-./deploy.sh
-```
-
-**Deployment process (3 steps):**
-1. ✅ **Resource Group** - Created if it doesn't exist
-2. ⏭️ **Key Vault** - Skipped (no certificate)
-3. 🚀 **Infrastructure** - Deploys App Service, APIM, App Gateway (HTTP), monitoring
-
-**Time:** ~15-20 minutes
-
-### Option 2: HTTPS with Custom Domain
 
 Deploy with HTTPS and custom domain:
 
@@ -113,7 +88,7 @@ After successful deployment with HTTPS:
    curl https://api.example.com/weather-mcp/health
    ```
 
-## Environment Variables Reference
+## Environment Variables Reference (deployment script)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -147,8 +122,7 @@ After successful deployment, you'll see:
 🔐 OAuth Configuration:
    Tenant ID:         xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
    Client App ID:     xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-   API Audience:      api://xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-   Required Scope:    mcp.access
+   API Audience:      api://xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx   Required Role:     MCP.ReadWrite   Required Scope:    mcp.access
 
 📦 Resources:
    Resource Group:    apim-mcp-rg
@@ -168,16 +142,11 @@ curl http://<app-gateway-ip>/weather-mcp/health
 curl https://api.example.com/weather-mcp/health
 ```
 
-### OAuth Discovery Endpoints
+### OpenID Connect Discovery Endpoint
 
-**Authorization Server Metadata (RFC 8414):**
+**OpenID Connect Metadata:**
 ```bash
-curl http://<app-gateway-ip>/weather-mcp/.well-known/oauth-authorization-server
-```
-
-**Protected Resource Metadata (RFC 9728):**
-```bash
-curl http://<app-gateway-ip>/weather-mcp/.well-known/oauth-protected-resource
+curl http://<app-gateway-ip>/weather-mcp/.well-known/openid-configuration
 ```
 
 ### MCP Protocol Test
@@ -198,16 +167,97 @@ curl -X POST https://api.example.com/weather-mcp/stream \
 
 ## Copilot Studio Integration
 
-Use the deployment output to configure Copilot Studio:
+### Configure OAuth 2.0 Authentication
 
-1. **MCP Endpoint URL:** Use `publicMcpBaseUrl` (HTTPS preferred)
-2. **Authentication:** OAuth 2.0
-3. **Client ID:** Use `mcpClientAppId` from output
-4. **Scope:** `{apiAudience}/mcp.access`
-5. **Authorization URL:** Auto-discovered via RFC 8414
-6. **Token URL:** Auto-discovered via RFC 8414
+Microsoft Copilot Studio requires **manual OAuth configuration** (dynamic discovery is not supported with Entra ID). Follow these steps:
 
-⚠️ **Important:** Use the exact URL from `publicMcpBaseUrl` output for OAuth protected resource metadata to work correctly.
+#### Step 1: Get Configuration Values
+
+After deployment, note these values from the output:
+- **Tenant ID**: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+- **Client App ID**: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (MCP_CLIENT_APP_ID)
+- **API Audience**: `api://xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/mcp.access`
+- **MCP Base URL**: `https://api.example.com/weather-mcp` (use HTTPS URL)
+
+#### Step 2: Configure Connection in Copilot Studio
+
+1. Open your copilot in **Copilot Studio**
+2. Go to **Your Agent** → **Tools** → **Add tool** → **Model Context Protocol**
+3. Select **OAuth 2.0** as authentication type 
+
+#### Step 3: Manual OAuth Configuration
+
+Since Copilot Studio doesn't support dynamic discovery with Entra ID, configure manually:
+
+**Connection Settings:**
+- **MCP Server URL**: `https://api.example.com/weather-mcp`
+  - ⚠️ Must match exactly (no trailing slash)
+  - Use HTTPS URL from deployment output
+
+**OAuth 2.0 Configuration:**
+- **Grant Type**: `Authorization Code`
+- **Authorization URL**: 
+  ```
+  https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/authorize
+  ```
+  Replace `{TENANT_ID}` with your actual tenant ID
+
+- **Token URL**: 
+  ```
+  https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token
+  ```
+  Replace `{TENANT_ID}` with your actual tenant ID
+
+- **Client ID**: Use the **Client App ID** from deployment output
+
+- **Client Secret**: 
+  1. Go to Azure Portal → Entra ID → App Registrations
+  2. Find your client app (name starts with your PREFIX)
+  3. Go to **Certificates & secrets** → **New client secret**
+  4. Copy the secret value (keep it secure!)
+
+- **Scope**: 
+  ```
+  api://{API_AUDIENCE}/mcp.access
+  ```
+  Replace `{API_AUDIENCE}` with the app ID from API Audience (without `api://` prefix)
+  
+  Example: If API Audience is `api://e0c4645c-d305-4cb4-8864-1d11b7fddfa2`, use:
+  ```
+  api://e0c4645c-d305-4cb4-8864-1d11b7fddfa2/mcp.access
+  ```
+
+- **Redirect URI**: Copy the redirect URI provided by Copilot Studio and:
+  1. Go to Azure Portal → Entra ID → App Registrations
+  2. Find your client app
+  3. Go to **Authentication** → **Add a platform** → **Web**
+  4. Add the Copilot Studio redirect URI
+  5. Save
+
+#### Step 4: Test the Connection
+
+1. Click **Test connection** in Copilot Studio
+2. You'll be redirected to sign in with your Microsoft account
+3. Grant consent when prompted
+4. Connection should succeed and show "Connected"
+
+### MCP Server Configuration
+
+After authentication is configured:
+
+1. **MCP Endpoint URL:** Use `publicMcpBaseUrl` from deployment (HTTPS preferred)
+2. The server supports these MCP tools:
+   - `get_weather` - Get current weather for a city
+   - `get_forecast` - Get weather forecast
+3. Test queries:
+   - "What's the weather in Seattle?"
+   - "Get me the forecast for Paris"
+
+⚠️ **Important Notes:**
+- Always use HTTPS URLs in production
+- Keep client secret secure and rotate regularly (e.g. implement [Entra Client Secret Rotation](https://github.com/aulong-msft/EntraClientSecretRotation))
+- Use the exact URL from `publicMcpBaseUrl` deployment output
+- For service-to-service scenarios, the `.default` scope uses app role assignment (`MCP.ReadWrite`)
 
 ## Architecture Details
 
@@ -215,90 +265,25 @@ Use the deployment output to configure Copilot Studio:
 
 1. **Client** → **App Gateway** (HTTPS with custom domain or HTTP with public IP)
 2. **App Gateway** → **API Management** (HTTP, internal)
-3. **API Management** → Validates JWT token, checks scope
+3. **API Management** → Validates JWT token, checks role
 4. **API Management** → **App Service** (HTTPS, internal)
 5. **App Service** → Processes MCP request, returns response
 
 ### Security Features
 
 - **JWT Validation** at API Management layer
-- **OAuth 2.0 scope enforcement** (`mcp.access`)
+- **Role-based access control** via:
+  - App role `MCP.ReadWrite` for service-to-service (application permissions)
+  - Delegated scope `mcp.access` for user context (delegated permissions)
 - **WAF v2** protection via Application Gateway
 - **User Assigned Managed Identity** for App Gateway → Key Vault access
 - **Certificate auto-renewal** support (App Gateway uses Key Vault reference)
 - **Soft delete & purge protection** on Key Vault
 
-## Troubleshooting
-
-### Certificate Import Failed
-```
-ERROR: Unable to load certificate file: Permission denied
-```
-**Fix:** Ensure certificate file is readable:
-```bash
-chmod 600 /path/to/certificate.pfx
-```
-
-### DNS Not Resolving
-**Wait 5-10 minutes** for DNS propagation, then verify:
-```bash
-nslookup api.example.com
-dig api.example.com
-```
-
-### APIM Deployment Slow
-API Management StandardV2 deployment takes 10-15 minutes. This is normal.
-
-### Key Vault Access Denied
-Ensure you have permissions to import certificates:
-```bash
-az keyvault set-policy \
-  --name <keyvault-name> \
-  --upn <your-email> \
-  --certificate-permissions import get list
-```
-
-## Clean Up
-
-To delete all deployed resources:
-
-```bash
-az group delete --name apim-mcp-rg --yes --no-wait
-```
-
-**Note:** Also delete Entra ID app registrations if desired:
-```bash
-cd infra
-./delete-entra-apps.sh
-```
-
 ## Additional Documentation
 
 - [OAuth 2.0 Setup Guide](OAUTH2_SETUP.md) - Detailed OAuth configuration
 - [HTTPS Setup Guide](HTTPS_SETUP.md) - Certificate management and custom domain setup
-
-## Deploy Script Behavior
-
-The deployment script is **idempotent** and performs:
-
-1. **Entra ID App Registration:**
-   - Creates or reuses API app (resource application) with Application ID URI
-   - Creates or reuses client app for delegation
-   - Assigns OAuth2 delegated scope (`mcp.access`)
-   - Grants admin consent automatically
-
-2. **Azure Resource Deployment:**
-   - Creates resource group (if needed)
-   - Deploys Key Vault + imports certificate (if HTTPS configured)
-   - Deploys main infrastructure (App Service, APIM, App Gateway, monitoring)
-
-3. **Configuration:**
-   - Configures App Service with OAuth settings
-   - Sets up APIM JWT validation policy
-   - Creates App Gateway HTTPS listener (if certificate provided)
-   - Establishes monitoring with Application Insights
-
-
 
 ## License
 This project is licensed under the MIT License. 

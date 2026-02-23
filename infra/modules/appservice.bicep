@@ -5,17 +5,22 @@ param tenantId string
 param clientAppId string
 param apiAudience string
 param publicMcpBaseUrl string
+param requiredRole string = 'MCP.ReadWrite'
+param requiredScope string = 'mcp.access'
 // param vnetIntegrationSubnetId string = '' // future
 
 var planName = '${prefix}-asp-${uniqueString(resourceGroup().id)}'
-var webName  = '${prefix}-mcp-app-${uniqueString(resourceGroup().id)}'
+var webName  = '${prefix}-app-${uniqueString(resourceGroup().id)}'
+
+// Extract app ID from api://appId format for audience array
+var appId = replace(apiAudience, 'api://', '')
 
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: planName
   location: location
   sku: {
-    name: 'S1'
-    tier: 'Standard'
+    name: 'P1v3'
+    tier: 'PremiumV3'
     capacity: 1
   }
   properties: {
@@ -50,7 +55,7 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
         }
         {
           name: 'AzureAd__Instance'
-          value: '${environment().authentication.loginEndpoint}/'
+          value: environment().authentication.loginEndpoint
         }
         {
           name: 'AzureAd__TenantId'
@@ -61,12 +66,20 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
           value: clientAppId
         }
         {
-          name: 'AzureAd__Audience'
+          name: 'AzureAd__Audience__0'
           value: apiAudience
         }
         {
+          name: 'AzureAd__Audience__1'
+          value: '00000002-0000-0000-c000-000000000000'
+        }
+        {
+          name: 'AzureAd__RequiredRole'
+          value: requiredRole
+        }
+        {
           name: 'AzureAd__RequiredScope'
-          value: 'mcp.access'
+          value: requiredScope
         }
         {
           name: 'AzureAd__EnableAuth'

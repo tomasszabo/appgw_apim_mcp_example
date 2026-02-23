@@ -21,7 +21,10 @@ param mcpClientAppId string
 @description('Microsoft Entra tenant ID')
 param tenantId string
 
-@description('Required OAuth2 scope or role')
+@description('Required OAuth2 app role for authorization (leave empty to skip role check)')
+param mcpRequiredRole string = 'MCP.ReadWrite'
+
+@description('Required OAuth2 scope for authorization (leave empty to skip scope check)')
 param mcpRequiredScope string = 'mcp.access'
 
 @description('Key Vault ID from separate deployment (deploy.sh Step 1). Format: /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.KeyVault/vaults/{name}. Leave empty for HTTP-only deployment.')
@@ -76,6 +79,8 @@ module app './modules/appservice.bicep' = {
     tenantId: tenantId
     clientAppId: mcpClientAppId
     apiAudience: mcpApiAudience
+    requiredRole: mcpRequiredRole
+    requiredScope: mcpRequiredScope
     // Use HTTPS with custom domain if configured, otherwise HTTP with public IP
     publicMcpBaseUrl: !empty(customDomainName) ? 'https://${customDomainName}/${mcpApiPath}' : 'http://${net.outputs.pipAddress}/${mcpApiPath}'
     // For future VNET integration uncomment and pass subnet id:
@@ -101,7 +106,8 @@ module apim './modules/apim.bicep' = {
     // Entra / OAuth2 validation inputs
     tenantId: tenantId
     mcpApiAudience: mcpApiAudience
-    requiredScopeOrRole: mcpRequiredScope
+    requiredRole: mcpRequiredRole
+    requiredScope: mcpRequiredScope
     
     // Shared Application Insights
     appInsightsId: monitoring.outputs.appInsightsId
@@ -153,8 +159,7 @@ output mcpApiPath string = mcpApiPath
 output mcpApiBaseUrl string = apim.outputs.mcpApiBaseUrl
 output mcpEndpointUrl string = apim.outputs.mcpEndpointUrl
 output healthCheckUrl string = apim.outputs.healthCheckUrl
-output oauthDiscoveryUrl string = apim.outputs.oauthDiscoveryUrl
-output oauthProtectedResourceUrl string = apim.outputs.oauthProtectedResourceUrl
+output oidcDiscoveryUrl string = apim.outputs.oidcDiscoveryUrl
 output appServiceUrl string = 'https://${app.outputs.defaultHostName}'
 output appServiceName string = app.outputs.webAppName
 output keyVaultId string = existingKeyVaultId

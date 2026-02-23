@@ -28,7 +28,7 @@ namespace MCPWeatherServer.Tools
         /// Get weather for a location (OAuth2 protected)
         /// </summary>
         [McpServerTool]
-        [Description("Get current and historical weather information for a specific location. Returns temperature, humidity, condition, and timestamp. Requires mcp.access scope.")]
+        [Description("Get current and historical weather information for a specific location. Returns temperature, humidity, condition, and timestamp. Requires MCP.ReadWrite role or mcp.access scope.")]
         public async Task<string> GetWeather(
             [Description("City name or location (e.g., 'New York', 'London')")] string location,
             [Description("Optional date in YYYY-MM-DD format. If omitted, uses current date.")] string date = null)

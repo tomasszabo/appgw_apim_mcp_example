@@ -5,8 +5,8 @@ set -euo pipefail
 # CONFIG
 ########################################
 LOCATION="${LOCATION:-swedencentral}"
-PREFIX="${PREFIX:-mcp}"
-RG_NAME="${RG_NAME:-apim-mcp-rg}"
+PREFIX="${PREFIX:-apim}"
+RG_NAME="${RG_NAME:-apim-mcp-01-rg}"
 
 # Key Vault & Certificate Configuration (optional)
 CERT_FILE="${CERT_FILE:-}"  # Path to .pfx certificate file
@@ -160,6 +160,8 @@ PARAMS=(
   "tenantId=$TENANT_ID"
   "mcpApiAudience=$MCP_API_AUDIENCE"
   "mcpClientAppId=$MCP_CLIENT_APP_ID"
+  "mcpRequiredRole=$ROLE_VALUE"
+  "mcpRequiredScope=$SCOPE_VALUE"
 )
 
 # Pass existing Key Vault ID if it was created
@@ -226,7 +228,8 @@ cat <<EOF
    Tenant ID:         $TENANT_ID
    Client App ID:     $MCP_CLIENT_APP_ID
    API Audience:      $MCP_API_AUDIENCE
-   Required Scope:    mcp.access
+   Required Role:     $ROLE_VALUE
+   Required Scope:    $SCOPE_VALUE
 
 📦 Resources:
    Resource Group:    $RG_NAME

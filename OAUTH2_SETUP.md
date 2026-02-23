@@ -15,6 +15,7 @@ Set `EnableAuth` to `true` in your configuration:
     "TenantId": "{your-tenant-id}",
     "ClientId": "{your-api-app-id}",
     "Audience": "api://{your-api-app-id}",
+    "RequiredRole": "MCP.ReadWrite",
     "RequiredScope": "mcp.access"
   }
 }
@@ -28,20 +29,54 @@ Set `EnableAuth` to `true` in your configuration:
 2. Click **New registration**
 3. Enter name: `MCP Weather API`
 4. Register
-5. Go to **Expose an API**
-   - Set Application ID URI: `api://{client-id}`
-   - Add Scope: `mcp.access`
-   - Description: `Access MCP Weather tools`
-6. Copy the `Application (client) ID` → use as `ClientId` and `Audience`
+5. Go to **App roles**
+   - Click **Create app role**
+   - Display name: `MCP Read Write Access`
+   - Allowed member types: `Applications` (for service-to-service auth)
+   - Value: `MCP.ReadWrite`
+   - Create
+6. Go to **Expose an API**
+   - Click **Add a scope**
+   - Scope name: `mcp.access`
+   - Who can consent: `Admins and users`
+   - Admin consent display name: `Access MCP Server`
+   - Admin consent description: `Allow the application to access MCP server on behalf of the signed-in user`
+   - Save
+7. Copy the `Application (client) ID` → use as `ClientId` and `Audience`
 
-#### Create Client App Registration (for testing)
+#### Create Client App Registration (Service Principal)
 
 1. Create another app registration: `MCP Weather Client`
-2. Go to **API Permissions**
-3. Click **Add a permission** → **APIs my organization uses**
-4. Search for your API app
-5. Select **Delegated permissions** → `mcp.access`
-6. Grant admin consent
+2. Go to **Certificates & secrets**
+3. Click **New client secret** → copy the value (save it securely!)
+4. Go to **API Permissions**
+5. Click **Add a permission** → **APIs my organization uses**
+6. Search for your API app (MCP Weather API)
+7. Select **Application permissions** → `MCP.ReadWrite` (app role)
+8. Click **Grant admin consent** to auto-approve
+
+#### Token Acquisition (Service Principal)
+
+Use Client Credentials flow to get a token with the `MCP.ReadWrite` role:
+
+```bash
+TENANT_ID="your-tenant-id"
+CLIENT_ID="client-app-id"
+CLIENT_SECRET="client-secret-value"
+API_AUDIENCE="api://api-app-id"
+
+TOKEN=$(curl -s -X POST \
+  "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=$CLIENT_ID" \
+  -d "client_secret=$CLIENT_SECRET" \
+  -d "scope=$API_AUDIENCE/.default" \
+  -d "grant_type=client_credentials" | jq -r .access_token)
+
+echo "https://jwt.ms?token=$TOKEN"
+```
+
+The token should have a `roles` claim containing `"MCP.ReadWrite"`.
 
 #### Configure for Copilot Studio Integration
 
@@ -89,7 +124,8 @@ Set `EnableAuth` to `true` in your configuration:
     "TenantId": "12345678-1234-1234-1234-123456789abc",  // MUST be your actual tenant ID (NOT "common")
     "ClientId": "abcdef01-2345-6789-abcd-ef0123456789",  // From API app registration
     "Audience": "api://abcdef01-2345-6789-abcd-ef0123456789", // Must match Application ID URI
-    "RequiredScope": "mcp.access",       // The scope name from Expose an API
+    "RequiredRole": "MCP.ReadWrite",    // The app role name from App roles
+    "RequiredScope": "mcp.access",      // The delegated scope from Expose an API
     "Authority": "https://login.microsoftonline.com/12345678-1234-1234-1234-123456789abc/v2.0",
     "EnableAuth": true
   }
@@ -131,8 +167,8 @@ curl -X POST http://localhost:5000/ \
 The APIM gateway automatically validates JWT tokens in the policy:
 - Validates the token signature using Azure AD's public keys
 - Checks the `aud` (audience) claim
-- Verifies the required `scp` (scope) or `roles` claim
-- Returns 401 if validation fails
+- Verifies the required `roles` claim contains the app role
+- Returns 403 if validation fails
 
 ## Authorization Check in Code
 
@@ -216,15 +252,19 @@ curl http://YOUR_APIM_URL/weather-mcp/.well-known/oauth-authorization-server | j
 
 1. Check `TenantId` matches token issuer
 2. Verify `Audience` matches Application ID URI in app registration
-3. Ensure token includes required `scp` claim (`mcp.access`)
+3. Ensure token includes required `roles` claim (`MCP.ReadWrite`) or `scp` claim (`mcp.access`)
 4. Confirm token was issued by correct tenant (check `iss` and `tid` claims)
 
-### Missing Scope Error
+### Missing Role or Scope Error
 
-1. Confirm scope `mcp.access` is defined in API app registration
-2. Verify client app has API permissions granted
-3. Check token scope claim: `scp` (should contain `mcp.access`)
-4. If using roles instead: check `roles` claim
+1. Confirm role `MCP.ReadWrite` is defined in API app registration → App roles
+2. Confirm scope `mcp.access` is defined in API app registration → Expose an API
+3. Verify client app service principal has been granted the `MCP.ReadWrite` app role (for service-to-service)
+4. Check token claims:
+   - `roles` claim should contain `MCP.ReadWrite` (for application permissions)
+   - `scp` claim should contain `mcp.access` (for delegated permissions)
+5. Use Client Credentials flow for service-to-service (gets `roles` claim)
+6. Use Authorization Code flow for user context (gets `scp` claim)
 
 ### 401 Unauthorized
 

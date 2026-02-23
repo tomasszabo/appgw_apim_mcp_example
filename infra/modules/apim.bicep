@@ -9,8 +9,10 @@ param mcpBackendBaseUrl string
 param tenantId string
 @description('Audience for JWT validation (Identifier URI), e.g. api://<prefix>-mcp-api')
 param mcpApiAudience string
-@description('Expected scope/role value, e.g. mcp.access')
-param requiredScopeOrRole string
+@description('Expected role value for authorization, e.g. MCP.ReadWrite (leave empty to skip role check)')
+param requiredRole string = ''
+@description('Expected scope value for authorization, e.g. mcp.access (leave empty to skip scope check)')
+param requiredScope string = ''
 
 @description('Shared Application Insights resource ID')
 param appInsightsId string
@@ -94,6 +96,45 @@ resource opMcp 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-previ
   }
 }
 
+// Operation policy for MCP endpoint - rate limit tool calls by session
+resource opMcpPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2023-05-01-preview' = {
+  name: 'policy'
+  parent: opMcp
+  properties: {
+    format: 'xml'
+    value: '''
+<policies>
+  <inbound>
+    <!-- Rate limit tool calls by Mcp-Session-Id header -->
+    <set-variable name="body" value="@(context.Request.Body.As<string>(preserveContent: true))" />
+    <choose>
+        <when condition="@(
+            Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables["body"])["method"] != null 
+            && Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables["body"])["method"].ToString() == "tools/call"
+        )">
+        <rate-limit-by-key 
+            calls="1" 
+            renewal-period="60" 
+            counter-key="@(
+                context.Request.Headers.GetValueOrDefault("Mcp-Session-Id", "unknown")
+            )" />
+        </when>
+    </choose>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>
+'''
+  }
+}
+
 resource opHealth 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
   name: 'health'
   parent: mcpApi
@@ -159,14 +200,14 @@ resource opHealthPolicy 'Microsoft.ApiManagement/service/apis/operations/policie
   }
 }
 
-resource opOAuthDiscovery 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
-  name: 'oauth-discovery'
+resource opOidcDiscovery 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
+  name: 'oidc-discovery'
   parent: mcpApi
   properties: {
-    displayName: 'OAuth Discovery'
-    description: 'OAuth 2.0 Authorization Server Metadata endpoint (RFC 8414)'
+    displayName: 'OpenID Connect Discovery'
+    description: 'OpenID Connect Discovery endpoint - redirects to Azure AD'
     method: 'GET'
-    urlTemplate: '/.well-known/oauth-authorization-server'
+    urlTemplate: '/.well-known/openid-configuration'
     request: {
       queryParameters: []
       headers: []
@@ -174,8 +215,8 @@ resource opOAuthDiscovery 'Microsoft.ApiManagement/service/apis/operations@2023-
     }
     responses: [
       {
-        statusCode: 200
-        description: 'OAuth metadata'
+        statusCode: 302
+        description: 'Redirect to Azure AD OIDC configuration'
         representations: [
           {
             contentType: 'application/json'
@@ -186,16 +227,16 @@ resource opOAuthDiscovery 'Microsoft.ApiManagement/service/apis/operations@2023-
   }
 }
 
-// Operation policy for OAuth discovery - no auth required
-resource opOAuthDiscoveryPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2023-05-01-preview' = {
+// Operation policy for OIDC discovery - no auth required
+resource opOidcDiscoveryPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2023-05-01-preview' = {
   name: 'policy'
-  parent: opOAuthDiscovery
+  parent: opOidcDiscovery
   properties: {
     format: 'xml'
     value: '''
 <policies>
   <inbound>
-    <!-- CORS policy for OAuth discovery endpoint -->
+    <!-- CORS policy for OIDC discovery endpoint -->
     <cors allow-credentials="false">
       <allowed-origins>
         <origin>*</origin>
@@ -224,14 +265,25 @@ resource opOAuthDiscoveryPolicy 'Microsoft.ApiManagement/service/apis/operations
   }
 }
 
-resource opProtectedResource 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
-  name: 'protected-resource'
+// REST API Operations for Weather Data
+
+resource opWeatherGet 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
+  name: 'get-weather'
   parent: mcpApi
   properties: {
-    displayName: 'OAuth Protected Resource Metadata'
-    description: 'OAuth 2.0 Protected Resource Metadata for MCP (RFC 9728) - MANDATORY for Copilot Studio'
+    displayName: 'Get Weather by Location'
+    description: 'Get current weather data for a specified location'
     method: 'GET'
-    urlTemplate: '/.well-known/oauth-protected-resource'
+    urlTemplate: '/api/weather/{location}'
+    templateParameters: [
+      {
+        name: 'location'
+        description: 'Location name (e.g., Seattle, Paris)'
+        type: 'string'
+        required: true
+        values: []
+      }
+    ]
     request: {
       queryParameters: []
       headers: []
@@ -240,7 +292,16 @@ resource opProtectedResource 'Microsoft.ApiManagement/service/apis/operations@20
     responses: [
       {
         statusCode: 200
-        description: 'Protected resource metadata'
+        description: 'Weather data for location'
+        representations: [
+          {
+            contentType: 'application/json'
+          }
+        ]
+      }
+      {
+        statusCode: 400
+        description: 'Bad request - invalid location'
         representations: [
           {
             contentType: 'application/json'
@@ -251,16 +312,16 @@ resource opProtectedResource 'Microsoft.ApiManagement/service/apis/operations@20
   }
 }
 
-// Operation policy for protected resource metadata - no auth required
-resource opProtectedResourcePolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2023-05-01-preview' = {
+resource opWeatherGetPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2023-05-01-preview' = {
   name: 'policy'
-  parent: opProtectedResource
+  parent: opWeatherGet
   properties: {
     format: 'xml'
     value: '''
 <policies>
   <inbound>
-    <!-- CORS policy for OAuth protected resource endpoint -->
+    <base />
+    <!-- CORS for REST API -->
     <cors allow-credentials="false">
       <allowed-origins>
         <origin>*</origin>
@@ -273,7 +334,6 @@ resource opProtectedResourcePolicy 'Microsoft.ApiManagement/service/apis/operati
         <header>*</header>
       </allowed-headers>
     </cors>
-    <!-- Skip API-level JWT validation for public discovery endpoint -->
   </inbound>
   <backend>
     <base />
@@ -320,6 +380,10 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
       </expose-headers>
     </cors>
     
+    <!-- Rate limiting: 1000 requests per minute -->
+    <rate-limit calls="1000" renewal-period="60" />
+    
+    <!-- Validate JWT access token issued by Entra ID -->
     <validate-jwt
       header-name="Authorization"
       require-scheme="Bearer"
@@ -334,6 +398,7 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
       <audiences>
         <audience>${mcpApiAudience}</audience>
         <audience>${appIdFromAudience}</audience>
+        <audience>00000002-0000-0000-c000-000000000000</audience> <!-- Microsoft Graph audience used by Copilot Studio -->
       </audiences>
 
       <issuers>
@@ -343,15 +408,19 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
 
     </validate-jwt>
     
-    <!-- Validate that token has required scope or role -->
+    <!-- Extract token claims for validation -->
+    <set-variable name="tokenAudience" value="@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;aud&quot;, &quot;&quot;))" />
+    <set-variable name="tokenScopes" value="@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;scp&quot;, &quot;&quot;))" />
+    <set-variable name="tokenRoles" value="@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;roles&quot;, &quot;&quot;))" />
+    <set-variable name="isGraphAudience" value="@((string)context.Variables[&quot;tokenAudience&quot;] == &quot;00000002-0000-0000-c000-000000000000&quot;)" />
+    
+    <!-- Validate that token has required scope or role (skip for Graph audience tokens which don't have these claims) -->
+    <set-variable name="hasRequiredRole" value="@((bool)context.Variables[&quot;isGraphAudience&quot;] || string.IsNullOrEmpty(&quot;${requiredRole}&quot;) || ((string)context.Variables[&quot;tokenRoles&quot;] ?? &quot;&quot;).Split(&apos; &apos;).Contains(&quot;${requiredRole}&quot;))" />
+    <set-variable name="hasRequiredScope" value="@((bool)context.Variables[&quot;isGraphAudience&quot;] || string.IsNullOrEmpty(&quot;${requiredScope}&quot;) || ((string)context.Variables[&quot;tokenScopes&quot;] ?? &quot;&quot;).Split(&apos; &apos;).Contains(&quot;${requiredScope}&quot;))" />
+    
     <choose>
-      <when condition="@{
-        var token = context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt();
-        var scp = token?.Claims.GetValueOrDefault(&quot;scp&quot;, &quot;&quot;);
-        var roles = token?.Claims.GetValueOrDefault(&quot;roles&quot;, &quot;&quot;);
-        return scp.Split(&apos; &apos;).Contains(&quot;${requiredScopeOrRole}&quot;) || roles.Split(&apos; &apos;).Contains(&quot;${requiredScopeOrRole}&quot;);
-      }">
-        <!-- Valid scope or role found, continue -->
+      <when condition="@((bool)context.Variables[&quot;hasRequiredRole&quot;] || (bool)context.Variables[&quot;hasRequiredScope&quot;])">
+        <!-- Valid scope or role found, or using Graph audience (no scope/role validation), continue -->
       </when>
       <otherwise>
         <return-response>
@@ -359,17 +428,13 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
           <set-header name="Content-Type" exists-action="override">
             <value>application/json</value>
           </set-header>
-          <set-body>@{
-            return "{\&quot;error\&quot;: \&quot;insufficient_scope\&quot;, \&quot;error_description\&quot;: \&quot;The token does not have the required scope: ${requiredScopeOrRole}\&quot;}";
-          }</set-body>
+          <set-body>{&quot;error&quot;:&quot;insufficient_scope&quot;,&quot;error_description&quot;:&quot;Token missing required role (${requiredRole}) or scope (${requiredScope})&quot;}</set-body>
         </return-response>
       </otherwise>
     </choose>
     
     <!-- Set backend address based on context -->
     <set-backend-service base-url="${mcpBackendBaseUrl}" />
-    
-    <!-- Authorization header is automatically forwarded to backend for MCP server validation -->
   </inbound>
 
   <backend>
@@ -420,25 +485,31 @@ resource apimDiagnostic 'Microsoft.ApiManagement/service/diagnostics@2023-05-01-
     }
     frontend: {
       request: {
+        headers: [
+          'Authorization'
+        ]
         body: {
           bytes: 8192
         }
       }
       response: {
         body: {
-          bytes: 8192
+          bytes: 0
         }
       }
     }
     backend: {
       request: {
+        headers: [
+          'Authorization'
+        ]
         body: {
           bytes: 8192
         }
       }
       response: {
         body: {
-          bytes: 8192
+          bytes: 0
         }
       }
     }
@@ -461,6 +532,9 @@ resource apiDiagnostic 'Microsoft.ApiManagement/service/apis/diagnostics@2023-05
     }
     frontend: {
       request: {
+        headers: [
+          'Authorization'
+        ]
         body: {
           bytes: 8192
         }
@@ -491,5 +565,4 @@ output apimGatewayHostname string = '${apim.name}.azure-api.net'
 output mcpApiBaseUrl string = 'https://${apim.name}.azure-api.net/${apiPath}'
 output mcpEndpointUrl string = 'https://${apim.name}.azure-api.net/${apiPath}/'
 output healthCheckUrl string = 'https://${apim.name}.azure-api.net/${apiPath}/health'
-output oauthDiscoveryUrl string = 'https://${apim.name}.azure-api.net/${apiPath}/.well-known/oauth-authorization-server'
-output oauthProtectedResourceUrl string = 'https://${apim.name}.azure-api.net/${apiPath}/.well-known/oauth-protected-resource'
+output oidcDiscoveryUrl string = 'https://${apim.name}.azure-api.net/${apiPath}/.well-known/openid-configuration'

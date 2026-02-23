@@ -4,7 +4,7 @@ set -euo pipefail
 ########################################
 # CONFIG (must match create script)
 ########################################
-PREFIX="${PREFIX:-mcp}"
+PREFIX="${PREFIX:-apim}"
 API_APP_NAME="${PREFIX}-mcp-api"
 CLIENT_APP_NAME="${PREFIX}-mcp-client"
 
