@@ -12,8 +12,6 @@ param requiredScope string = 'mcp.access'
 var planName = '${prefix}-asp-${uniqueString(resourceGroup().id)}'
 var webName  = '${prefix}-app-${uniqueString(resourceGroup().id)}'
 
-// Extract app ID from api://appId format for audience array
-var appId = replace(apiAudience, 'api://', '')
 
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: planName

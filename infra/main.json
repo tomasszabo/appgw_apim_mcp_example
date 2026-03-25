@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.40.2.10011",
-      "templateHash": "2343146090095830302"
+      "version": "0.41.2.15936",
+      "templateHash": "17373412238132530228"
     }
   },
   "parameters": {
@@ -118,8 +118,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.40.2.10011",
-              "templateHash": "2097438984747160690"
+              "version": "0.41.2.15936",
+              "templateHash": "12620797563140025203"
             }
           },
           "parameters": {
@@ -209,8 +209,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.40.2.10011",
-              "templateHash": "7726454746706344826"
+              "version": "0.41.2.15936",
+              "templateHash": "2468650412263134619"
             }
           },
           "parameters": {
@@ -351,8 +351,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.40.2.10011",
-              "templateHash": "11039188339812969907"
+              "version": "0.41.2.15936",
+              "templateHash": "13556716377621458410"
             }
           },
           "parameters": {
@@ -434,7 +434,7 @@
                     },
                     {
                       "name": "AzureAd__Instance",
-                      "value": "[format('{0}/', environment().authentication.loginEndpoint)]"
+                      "value": "[environment().authentication.loginEndpoint]"
                     },
                     {
                       "name": "AzureAd__TenantId",
@@ -445,8 +445,12 @@
                       "value": "[parameters('clientAppId')]"
                     },
                     {
-                      "name": "AzureAd__Audience",
+                      "name": "AzureAd__Audience__0",
                       "value": "[parameters('apiAudience')]"
+                    },
+                    {
+                      "name": "AzureAd__Audience__1",
+                      "value": "00000002-0000-0000-c000-000000000000"
                     },
                     {
                       "name": "AzureAd__RequiredRole",
@@ -547,8 +551,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.40.2.10011",
-              "templateHash": "7375761338985871528"
+              "version": "0.41.2.15936",
+              "templateHash": "12225591198012247504"
             }
           },
           "parameters": {
@@ -610,7 +614,8 @@
             "apimName": "[format('{0}-apim-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]",
             "apiName": "mcp",
             "apiPath": "weather-mcp",
-            "appIdFromAudience": "[replace(parameters('mcpApiAudience'), 'api://', '')]"
+            "appIdFromAudience": "[replace(parameters('mcpApiAudience'), 'api://', '')]",
+            "stsIssuerPrefix": "[replace(environment().authentication.loginEndpoint, 'login.microsoftonline.com/', 'sts.windows.net/')]"
           },
           "resources": [
             {
@@ -691,6 +696,18 @@
               ]
             },
             {
+              "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}/{3}', variables('apimName'), variables('apiName'), 'mcp', 'policy')]",
+              "properties": {
+                "format": "xml",
+                "value": "<policies>\n  <inbound>\n    <!-- Rate limit tool calls by Mcp-Session-Id header -->\n    <set-variable name=\"body\" value=\"@(context.Request.Body.As<string>(preserveContent: true))\" />\n    <choose>\n        <when condition=\"@(\n            Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables[\"body\"])[\"method\"] != null \n            && Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables[\"body\"])[\"method\"].ToString() == \"tools/call\"\n        )\">\n        <rate-limit-by-key \n            calls=\"1\" \n            renewal-period=\"60\" \n            counter-key=\"@(\n                context.Request.Headers.GetValueOrDefault(\"Mcp-Session-Id\", \"unknown\")\n            )\" />\n        </when>\n    </choose>\n  </inbound>\n  <backend>\n    <base />\n  </backend>\n  <outbound>\n    <base />\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis/operations', variables('apimName'), variables('apiName'), 'mcp')]"
+              ]
+            },
+            {
               "type": "Microsoft.ApiManagement/service/apis/operations",
               "apiVersion": "2023-05-01-preview",
               "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'health')]",
@@ -735,12 +752,12 @@
             {
               "type": "Microsoft.ApiManagement/service/apis/operations",
               "apiVersion": "2023-05-01-preview",
-              "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'oauth-discovery')]",
+              "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'oidc-discovery')]",
               "properties": {
-                "displayName": "OAuth Discovery",
-                "description": "OAuth 2.0 Authorization Server Metadata endpoint (RFC 8414)",
+                "displayName": "OpenID Connect Discovery",
+                "description": "OpenID Connect Discovery endpoint - redirects to Azure AD",
                 "method": "GET",
-                "urlTemplate": "/.well-known/oauth-authorization-server",
+                "urlTemplate": "/.well-known/openid-configuration",
                 "request": {
                   "queryParameters": [],
                   "headers": [],
@@ -748,8 +765,8 @@
                 },
                 "responses": [
                   {
-                    "statusCode": 200,
-                    "description": "OAuth metadata",
+                    "statusCode": 302,
+                    "description": "Redirect to Azure AD OIDC configuration",
                     "representations": [
                       {
                         "contentType": "application/json"
@@ -765,24 +782,33 @@
             {
               "type": "Microsoft.ApiManagement/service/apis/operations/policies",
               "apiVersion": "2023-05-01-preview",
-              "name": "[format('{0}/{1}/{2}/{3}', variables('apimName'), variables('apiName'), 'oauth-discovery', 'policy')]",
+              "name": "[format('{0}/{1}/{2}/{3}', variables('apimName'), variables('apiName'), 'oidc-discovery', 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "<policies>\n  <inbound>\n    <!-- CORS policy for OAuth discovery endpoint -->\n    <cors allow-credentials=\"false\">\n      <allowed-origins>\n        <origin>*</origin>\n      </allowed-origins>\n      <allowed-methods>\n        <method>GET</method>\n        <method>OPTIONS</method>\n      </allowed-methods>\n      <allowed-headers>\n        <header>*</header>\n      </allowed-headers>\n    </cors>\n    <!-- Skip API-level JWT validation for public discovery endpoint -->\n  </inbound>\n  <backend>\n    <base />\n  </backend>\n  <outbound>\n    <base />\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n"
+                "value": "<policies>\n  <inbound>\n    <!-- CORS policy for OIDC discovery endpoint -->\n    <cors allow-credentials=\"false\">\n      <allowed-origins>\n        <origin>*</origin>\n      </allowed-origins>\n      <allowed-methods>\n        <method>GET</method>\n        <method>OPTIONS</method>\n      </allowed-methods>\n      <allowed-headers>\n        <header>*</header>\n      </allowed-headers>\n    </cors>\n    <!-- Skip API-level JWT validation for public discovery endpoint -->\n  </inbound>\n  <backend>\n    <base />\n  </backend>\n  <outbound>\n    <base />\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.ApiManagement/service/apis/operations', variables('apimName'), variables('apiName'), 'oauth-discovery')]"
+                "[resourceId('Microsoft.ApiManagement/service/apis/operations', variables('apimName'), variables('apiName'), 'oidc-discovery')]"
               ]
             },
             {
               "type": "Microsoft.ApiManagement/service/apis/operations",
               "apiVersion": "2023-05-01-preview",
-              "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'protected-resource')]",
+              "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'get-weather')]",
               "properties": {
-                "displayName": "OAuth Protected Resource Metadata",
-                "description": "OAuth 2.0 Protected Resource Metadata for MCP (RFC 9728) - MANDATORY for Copilot Studio",
+                "displayName": "Get Weather by Location",
+                "description": "Get current weather data for a specified location",
                 "method": "GET",
-                "urlTemplate": "/.well-known/oauth-protected-resource",
+                "urlTemplate": "/api/weather/{location}",
+                "templateParameters": [
+                  {
+                    "name": "location",
+                    "description": "Location name (e.g., Seattle, Paris)",
+                    "type": "string",
+                    "required": true,
+                    "values": []
+                  }
+                ],
                 "request": {
                   "queryParameters": [],
                   "headers": [],
@@ -791,7 +817,16 @@
                 "responses": [
                   {
                     "statusCode": 200,
-                    "description": "Protected resource metadata",
+                    "description": "Weather data for location",
+                    "representations": [
+                      {
+                        "contentType": "application/json"
+                      }
+                    ]
+                  },
+                  {
+                    "statusCode": 400,
+                    "description": "Bad request - invalid location",
                     "representations": [
                       {
                         "contentType": "application/json"
@@ -807,13 +842,13 @@
             {
               "type": "Microsoft.ApiManagement/service/apis/operations/policies",
               "apiVersion": "2023-05-01-preview",
-              "name": "[format('{0}/{1}/{2}/{3}', variables('apimName'), variables('apiName'), 'protected-resource', 'policy')]",
+              "name": "[format('{0}/{1}/{2}/{3}', variables('apimName'), variables('apiName'), 'get-weather', 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "<policies>\n  <inbound>\n    <!-- CORS policy for OAuth protected resource endpoint -->\n    <cors allow-credentials=\"false\">\n      <allowed-origins>\n        <origin>*</origin>\n      </allowed-origins>\n      <allowed-methods>\n        <method>GET</method>\n        <method>OPTIONS</method>\n      </allowed-methods>\n      <allowed-headers>\n        <header>*</header>\n      </allowed-headers>\n    </cors>\n    <!-- Skip API-level JWT validation for public discovery endpoint -->\n  </inbound>\n  <backend>\n    <base />\n  </backend>\n  <outbound>\n    <base />\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n"
+                "value": "<policies>\n  <inbound>\n    <base />\n    <!-- CORS for REST API -->\n    <cors allow-credentials=\"false\">\n      <allowed-origins>\n        <origin>*</origin>\n      </allowed-origins>\n      <allowed-methods>\n        <method>GET</method>\n        <method>OPTIONS</method>\n      </allowed-methods>\n      <allowed-headers>\n        <header>*</header>\n      </allowed-headers>\n    </cors>\n  </inbound>\n  <backend>\n    <base />\n  </backend>\n  <outbound>\n    <base />\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.ApiManagement/service/apis/operations', variables('apimName'), variables('apiName'), 'protected-resource')]"
+                "[resourceId('Microsoft.ApiManagement/service/apis/operations', variables('apimName'), variables('apiName'), 'get-weather')]"
               ]
             },
             {
@@ -822,7 +857,7 @@
               "name": "[format('{0}/{1}/{2}', variables('apimName'), variables('apiName'), 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[format('<policies>\n  <inbound>\n    <base />\n    \n    <!-- CORS policy for MCP clients -->\n    <cors allow-credentials=\"false\">\n      <allowed-origins>\n        <origin>*</origin>\n      </allowed-origins>\n      <allowed-methods>\n        <method>GET</method>\n        <method>POST</method>\n        <method>PUT</method>\n        <method>DELETE</method>\n        <method>OPTIONS</method>\n      </allowed-methods>\n      <allowed-headers>\n        <header>*</header>\n      </allowed-headers>\n      <expose-headers>\n        <header>*</header>\n      </expose-headers>\n    </cors>\n    \n    <!-- Rate limiting: 1000 requests per minute -->\n    <rate-limit calls=\"1000\" renewal-period=\"60\" />\n    \n    <!-- Validate JWT access token issued by Entra ID -->\n    <validate-jwt\n      header-name=\"Authorization\"\n      require-scheme=\"Bearer\"\n      require-expiration-time=\"true\"\n      require-signed-tokens=\"true\"\n      failed-validation-httpcode=\"401\"\n      failed-validation-error-message=\"Unauthorized\">\n\n      <openid-config\n        url=\"{0}{1}/v2.0/.well-known/openid-configuration\" />\n\n      <audiences>\n        <audience>{2}</audience>\n        <audience>{3}</audience>\n        <audience>00000002-0000-0000-c000-000000000000</audience> <!-- Microsoft Graph audience used by Copilot Studio -->\n      </audiences>\n\n      <issuers>\n        <issuer>{4}{5}/</issuer>\n        <issuer>{6}{7}/v2.0</issuer>\n      </issuers>\n\n    </validate-jwt>\n    \n    <!-- Extract token claims for validation -->\n    <set-variable name=\"tokenScopes\" value=\"@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;scp&quot;, &quot;&quot;))\" />\n    <set-variable name=\"tokenRoles\" value=\"@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;roles&quot;, &quot;&quot;))\" />\n    \n    <!-- Validate that token has required scope or role -->\n    <set-variable name=\"hasRequiredRole\" value=\"@(string.IsNullOrEmpty(&quot;{8}&quot;) || ((string)context.Variables[&quot;tokenRoles&quot;] ?? &quot;&quot;).Split(&apos; &apos;).Contains(&quot;{9}&quot;))\" />\n    <set-variable name=\"hasRequiredScope\" value=\"@(string.IsNullOrEmpty(&quot;{10}&quot;) || ((string)context.Variables[&quot;tokenScopes&quot;] ?? &quot;&quot;).Split(&apos; &apos;).Contains(&quot;{11}&quot;))\" />\n    \n    <choose>\n      <when condition=\"@((bool)context.Variables[&quot;hasRequiredRole&quot;] || (bool)context.Variables[&quot;hasRequiredScope&quot;])\">\n        <!-- Valid scope or role found, continue -->\n      </when>\n      <otherwise>\n        <return-response>\n          <set-status code=\"403\" reason=\"Forbidden\" />\n          <set-header name=\"Content-Type\" exists-action=\"override\">\n            <value>application/json</value>\n          </set-header>\n          <set-body>{{&quot;error&quot;:&quot;insufficient_scope&quot;,&quot;error_description&quot;:&quot;Token missing required role ({12}) or scope ({13})&quot;}}</set-body>\n        </return-response>\n      </otherwise>\n    </choose>\n    \n    <!-- Set backend address based on context -->\n    <set-backend-service base-url=\"{14}\" />\n    \n    <!-- Authorization header is automatically forwarded to backend for MCP server validation -->\n  </inbound>\n\n  <backend>\n    <base />\n  </backend>\n\n  <outbound>\n    <base />\n  </outbound>\n\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n', environment().authentication.loginEndpoint, parameters('tenantId'), parameters('mcpApiAudience'), variables('appIdFromAudience'), replace(environment().authentication.loginEndpoint, 'login.microsoftonline.com/', 'sts.windows.net/'), parameters('tenantId'), environment().authentication.loginEndpoint, parameters('tenantId'), parameters('requiredRole'), parameters('requiredRole'), parameters('requiredScope'), parameters('requiredScope'), parameters('requiredRole'), parameters('requiredScope'), parameters('mcpBackendBaseUrl'))]"
+                "value": "[format('<policies>\n  <inbound>\n    <base />\n    \n    <!-- CORS policy for MCP clients -->\n    <cors allow-credentials=\"false\">\n      <allowed-origins>\n        <origin>*</origin>\n      </allowed-origins>\n      <allowed-methods>\n        <method>GET</method>\n        <method>POST</method>\n        <method>PUT</method>\n        <method>DELETE</method>\n        <method>OPTIONS</method>\n      </allowed-methods>\n      <allowed-headers>\n        <header>*</header>\n      </allowed-headers>\n      <expose-headers>\n        <header>*</header>\n      </expose-headers>\n    </cors>\n    \n    <!-- Rate limiting: 1000 requests per minute -->\n    <rate-limit calls=\"1000\" renewal-period=\"60\" />\n    \n    <!-- Validate JWT access token issued by Entra ID -->\n    <validate-jwt\n      header-name=\"Authorization\"\n      require-scheme=\"Bearer\"\n      require-expiration-time=\"true\"\n      require-signed-tokens=\"true\"\n      failed-validation-httpcode=\"401\"\n      failed-validation-error-message=\"Unauthorized\">\n\n      <openid-config\n        url=\"{0}{1}/v2.0/.well-known/openid-configuration\" />\n\n      <audiences>\n        <audience>{2}</audience>\n        <audience>{3}</audience>\n        <audience>00000002-0000-0000-c000-000000000000</audience> <!-- Microsoft Graph audience used by Copilot Studio -->\n      </audiences>\n\n      <issuers>\n        <issuer>{4}{5}/</issuer>\n        <issuer>{6}{7}/v2.0</issuer>\n      </issuers>\n\n    </validate-jwt>\n    \n    <!-- Extract token claims for validation -->\n    <set-variable name=\"tokenAudience\" value=\"@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;aud&quot;, &quot;&quot;))\" />\n    <set-variable name=\"tokenScopes\" value=\"@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;scp&quot;, &quot;&quot;))\" />\n    <set-variable name=\"tokenRoles\" value=\"@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;roles&quot;, &quot;&quot;))\" />\n    <set-variable name=\"isGraphAudience\" value=\"@((string)context.Variables[&quot;tokenAudience&quot;] == &quot;00000002-0000-0000-c000-000000000000&quot;)\" />\n    \n    <!-- Validate that token has required scope or role (skip for Graph audience tokens which don''t have these claims) -->\n    <set-variable name=\"hasRequiredRole\" value=\"@((bool)context.Variables[&quot;isGraphAudience&quot;] || string.IsNullOrEmpty(&quot;{8}&quot;) || ((string)context.Variables[&quot;tokenRoles&quot;] ?? &quot;&quot;).Split(&apos; &apos;).Contains(&quot;{9}&quot;))\" />\n    <set-variable name=\"hasRequiredScope\" value=\"@((bool)context.Variables[&quot;isGraphAudience&quot;] || string.IsNullOrEmpty(&quot;{10}&quot;) || ((string)context.Variables[&quot;tokenScopes&quot;] ?? &quot;&quot;).Split(&apos; &apos;).Contains(&quot;{11}&quot;))\" />\n    \n    <choose>\n      <when condition=\"@((bool)context.Variables[&quot;hasRequiredRole&quot;] || (bool)context.Variables[&quot;hasRequiredScope&quot;])\">\n        <!-- Valid scope or role found, or using Graph audience (no scope/role validation), continue -->\n      </when>\n      <otherwise>\n        <return-response>\n          <set-status code=\"403\" reason=\"Forbidden\" />\n          <set-header name=\"Content-Type\" exists-action=\"override\">\n            <value>application/json</value>\n          </set-header>\n          <set-body>{{&quot;error&quot;:&quot;insufficient_scope&quot;,&quot;error_description&quot;:&quot;Token missing required role ({12}) or scope ({13})&quot;}}</set-body>\n        </return-response>\n      </otherwise>\n    </choose>\n    \n    <!-- Set backend address based on context -->\n    <set-backend-service base-url=\"{14}\" />\n  </inbound>\n\n  <backend>\n    <base />\n  </backend>\n\n  <outbound>\n    <base />\n  </outbound>\n\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n', environment().authentication.loginEndpoint, parameters('tenantId'), parameters('mcpApiAudience'), variables('appIdFromAudience'), variables('stsIssuerPrefix'), parameters('tenantId'), environment().authentication.loginEndpoint, parameters('tenantId'), parameters('requiredRole'), parameters('requiredRole'), parameters('requiredScope'), parameters('requiredScope'), parameters('requiredRole'), parameters('requiredScope'), parameters('mcpBackendBaseUrl'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis', variables('apimName'), variables('apiName'))]"
@@ -869,19 +904,22 @@
                   },
                   "response": {
                     "body": {
-                      "bytes": 8192
+                      "bytes": 0
                     }
                   }
                 },
                 "backend": {
                   "request": {
+                    "headers": [
+                      "Authorization"
+                    ],
                     "body": {
                       "bytes": 8192
                     }
                   },
                   "response": {
                     "body": {
-                      "bytes": 8192
+                      "bytes": 0
                     }
                   }
                 }
@@ -960,13 +998,9 @@
               "type": "string",
               "value": "[format('https://{0}.azure-api.net/{1}/health', variables('apimName'), variables('apiPath'))]"
             },
-            "oauthDiscoveryUrl": {
+            "oidcDiscoveryUrl": {
               "type": "string",
-              "value": "[format('https://{0}.azure-api.net/{1}/.well-known/oauth-authorization-server', variables('apimName'), variables('apiPath'))]"
-            },
-            "oauthProtectedResourceUrl": {
-              "type": "string",
-              "value": "[format('https://{0}.azure-api.net/{1}/.well-known/oauth-protected-resource', variables('apimName'), variables('apiPath'))]"
+              "value": "[format('https://{0}.azure-api.net/{1}/.well-known/openid-configuration', variables('apimName'), variables('apiPath'))]"
             }
           }
         }
@@ -1017,8 +1051,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.40.2.10011",
-              "templateHash": "1124702298885722278"
+              "version": "0.41.2.15936",
+              "templateHash": "12840926364041957691"
             }
           },
           "parameters": {
@@ -1066,7 +1100,7 @@
             "agwName": "[format('{0}-agw-{1}', parameters('prefix'), uniqueString(resourceGroup().id))]",
             "hasHttps": "[and(not(empty(parameters('customDomainName'))), not(empty(parameters('certificateName'))))]",
             "keyVaultName": "[if(not(empty(parameters('keyVaultId'))), split(parameters('keyVaultId'), '/')[8], '')]",
-            "keyVaultSecretUri": "[if(not(empty(parameters('keyVaultId'))), format('https://{0}.vault.azure.net/secrets/{1}', variables('keyVaultName'), parameters('certificateName')), '')]"
+            "keyVaultSecretUri": "[if(not(empty(parameters('keyVaultId'))), format('https://{0}{1}/secrets/{2}', variables('keyVaultName'), environment().suffixes.keyvaultDns, parameters('certificateName')), '')]"
           },
           "resources": [
             {
@@ -1085,7 +1119,7 @@
                 "accessPolicies": [
                   {
                     "tenantId": "[subscription().tenantId]",
-                    "objectId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agw-identity-{1}', parameters('prefix'), uniqueString(resourceGroup().id))), '2023-01-31').principalId]",
+                    "objectId": "[coalesce(tryGet(if(variables('hasHttps'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agw-identity-{1}', parameters('prefix'), uniqueString(resourceGroup().id))), '2023-01-31', 'full'), null()), 'properties', 'principalId'), '')]",
                     "permissions": {
                       "secrets": [
                         "get",
@@ -1264,13 +1298,9 @@
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix'))), '2025-04-01').outputs.healthCheckUrl.value]"
     },
-    "oauthDiscoveryUrl": {
+    "oidcDiscoveryUrl": {
       "type": "string",
-      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix'))), '2025-04-01').outputs.oauthDiscoveryUrl.value]"
-    },
-    "oauthProtectedResourceUrl": {
-      "type": "string",
-      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix'))), '2025-04-01').outputs.oauthProtectedResourceUrl.value]"
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-apim', parameters('prefix'))), '2025-04-01').outputs.oidcDiscoveryUrl.value]"
     },
     "appServiceUrl": {
       "type": "string",

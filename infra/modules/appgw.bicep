@@ -23,7 +23,7 @@ var hasHttps = !empty(customDomainName) && !empty(certificateName)
 // Output: https://{name}.vault.azure.net/secrets/{cert}
 // Note: Do NOT use /latest - App Gateway auto-resolves to latest version
 var keyVaultName = !empty(keyVaultId) ? split(keyVaultId, '/')[8] : ''
-var keyVaultSecretUri = !empty(keyVaultId) ? 'https://${keyVaultName}.vault.azure.net/secrets/${certificateName}' : ''
+var keyVaultSecretUri = !empty(keyVaultId) ? 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets/${certificateName}' : ''
 
 resource pip 'Microsoft.Network/publicIPAddresses@2023-11-01' existing = {
   name: split(pipId, '/')[8]
@@ -42,7 +42,7 @@ resource keyVaultAccessPolicy 'Microsoft.KeyVault/vaults/accessPolicies@2023-07-
     accessPolicies: [
       {
         tenantId: subscription().tenantId
-        objectId: appGwIdentity.properties.principalId
+        objectId: appGwIdentity.?properties.principalId ?? ''
         permissions: {
           secrets: [
             'get'

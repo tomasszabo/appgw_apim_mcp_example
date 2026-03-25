@@ -26,6 +26,11 @@ var apiPath = 'weather-mcp'
 // Extract app ID from audience (handles both api://appId and just appId formats)
 var appIdFromAudience = replace(mcpApiAudience, 'api://', '')
 
+// Compute the Azure AD v1.0 STS issuer prefix dynamically from the login endpoint
+// (replaces the login hostname with the STS hostname for v1.0 token validation)
+#disable-next-line no-hardcoded-env-urls
+var stsIssuerPrefix = replace(environment().authentication.loginEndpoint, 'login.microsoftonline.com/', 'sts.windows.net/')
+
 resource apim 'Microsoft.ApiManagement/service@2023-09-01-preview' = {
   name: apimName
   location: location
@@ -402,7 +407,7 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
       </audiences>
 
       <issuers>
-        <issuer>${replace(environment().authentication.loginEndpoint, 'login.microsoftonline.com/', 'sts.windows.net/')}${tenantId}/</issuer>
+        <issuer>${stsIssuerPrefix}${tenantId}/</issuer>
         <issuer>${environment().authentication.loginEndpoint}${tenantId}/v2.0</issuer>
       </issuers>
 
